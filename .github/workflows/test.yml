@@ -54,7 +54,7 @@ jobs:
           java-version: 11
       - name: Check with integration
         if: matrix.os == 'ubuntu-latest'
-        run: ./gradlew check -PintegrationTests=include
+        run: ./gradlew check -PintegrationTests=include -PverboseTests=ON
       - name: Check without integration
         if: matrix.os != 'ubuntu-latest'
-        run: ./gradlew check
+        run: ./gradlew check -PverboseTests=ON

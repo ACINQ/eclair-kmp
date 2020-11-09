@@ -147,11 +147,12 @@ afterEvaluate {
 
 afterEvaluate {
     tasks.withType<AbstractTestTask>() {
+        val verboseTests = project.findProperty("verboseTests") == "ON"
         testLogging {
             events("skipped", "failed")
             showExceptions = true
             showStackTraces = true
-            showStandardStreams = false
+            showStandardStreams = verboseTests
         }
     }
 }

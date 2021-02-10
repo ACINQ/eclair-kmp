@@ -1,65 +1,66 @@
 package fr.acinq.eclair.io
 
-import fr.acinq.eclair.io.ios_network_framework.nw_k_connection_receive
-import fr.acinq.eclair.io.ios_network_framework.nw_k_parameters_create_secure_tcp
-import fr.acinq.eclair.io.ios_network_framework.nw_k_parameters_create_secure_tcp_custom
 import fr.acinq.eclair.utils.eclairLogger
-import kotlinx.cinterop.*
-import kotlinx.coroutines.suspendCancellableCoroutine
-import platform.Network.*
-import platform.Security.sec_protocol_options_set_verify_block
-import platform.darwin.dispatch_data_apply
-import platform.darwin.dispatch_data_create
-import platform.darwin.dispatch_data_get_size
-import platform.darwin.dispatch_get_main_queue
-import platform.posix.ECONNREFUSED
-import platform.posix.ECONNRESET
-import platform.posix.memcpy
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
+import platform.Network.nw_connection_t
 import kotlin.native.concurrent.ThreadLocal
+
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class IosTcpSocket(private val connection: nw_connection_t) : TcpSocket {
-    override suspend fun send(bytes: ByteArray?, flush: Boolean): Unit =
-        suspendCancellableCoroutine { continuation ->
-            val pinned = bytes?.pin()
-            val data = pinned?.let { dispatch_data_create(pinned.addressOf(0), bytes.size.convert(), dispatch_get_main_queue(), ({})) }
-            nw_connection_send(connection, data, null, flush) { error ->
-                pinned?.unpin()
-                if (error != null) continuation.resumeWithException(error.toIOException())
-                else continuation.resume(Unit)
+    override suspend fun send(bytes: ByteArray?, offset: Int, length: Int, flush: Boolean): Unit {
+        if (bytes != null) {
+            bytes.useDataView(offset, length) { data ->
+                connection.sendData(data, flush)
             }
+        } else {
+            connection.sendData(null, flush)
         }
-
-    private suspend fun receive(buffer: ByteArray, min: Int): Int =
-        suspendCancellableCoroutine { continuation ->
-            nw_k_connection_receive(connection, min.convert(), buffer.size.convert()) { data, isComplete, error ->
-                when {
-                    error != null -> continuation.resumeWithException(error.toIOException())
-                    data != null -> {
-                        buffer.usePinned { pinned ->
-                            dispatch_data_apply(data) { _, offset, src, size ->
-                                memcpy(pinned.addressOf(offset.convert()), src, size)
-                                true
-                            }
-                        }
-                        continuation.resume(dispatch_data_get_size(data).convert())
-                    }
-                    isComplete -> continuation.resumeWithException(TcpSocket.IOException.ConnectionClosed())
-                }
-            }
-        }
-
-    override suspend fun receiveFully(buffer: ByteArray) {
-        receive(buffer, buffer.size)
     }
 
+    private suspend fun receive(buffer: ByteArray, offset: Int, min: Int, max: Int): Int {
+        val data = connection.receiveData(min, max)
+        data.copyTo(buffer, offset)
+        return data.size()
+    }
 
-    override suspend fun receiveAvailable(buffer: ByteArray): Int = receive(buffer, 0)
+    override suspend fun receiveFully(buffer: ByteArray, offset: Int, length: Int) {
+        receive(buffer, offset, length, length)
+    }
+
+    override suspend fun receiveAvailable(buffer: ByteArray, offset: Int, maxLength: Int): Int {
+        return receive(buffer, offset, 1, maxLength)
+    }
+
+    override suspend fun startTls(tls: TcpSocket.TLS): TcpSocket {
+        val listener = openListener(MainScope(), "127.0.0.1", "0")
+        MainScope().launch {
+            val listeningConnection = listener.connections.receive()
+
+            launch {
+                transferLoop(listeningConnection, connection)
+                connection.cancel()
+                listener.close()
+            }
+            launch {
+                transferLoop(connection, listeningConnection)
+                listeningConnection.cancel()
+            }
+        }
+
+        val tlsConnection = openClientConnection("127.0.0.1", listener.port,
+            when (tls) {
+                TcpSocket.TLS.SAFE -> NwTls(safe = true, auth = false)
+                TcpSocket.TLS.UNSAFE_CERTIFICATES -> NwTls(safe = false, auth = false)
+            }
+        )
+
+        return IosTcpSocket(tlsConnection)
+    }
 
     override fun close() {
-        nw_connection_cancel(connection)
+        connection.cancel()
     }
 }
 
@@ -68,51 +69,15 @@ internal actual object PlatformSocketBuilder : TcpSocket.Builder {
     private val logger by eclairLogger<IosTcpSocket>()
 
     @OptIn(ExperimentalUnsignedTypes::class)
-    override suspend fun connect(host: String, port: Int, tls: TcpSocket.TLS?): TcpSocket =
-        suspendCancellableCoroutine { continuation ->
-            val endpoint = nw_endpoint_create_host(host, port.toString())
-
-            val parameters =
-                when (tls) {
-                    null -> nw_k_parameters_create_secure_tcp(false)
-                    TcpSocket.TLS.SAFE -> nw_k_parameters_create_secure_tcp(true)
-                    TcpSocket.TLS.UNSAFE_CERTIFICATES -> nw_k_parameters_create_secure_tcp_custom {
-                        logger.warning { "Using unsafe TLS!" }
-                        val sec_options = nw_tls_copy_sec_protocol_options(it)
-                        sec_protocol_options_set_verify_block(sec_options, { _, _, handler ->
-                            handler!!(true)
-                        }, dispatch_get_main_queue())
-                    }
-                }
-
-            val connection = nw_connection_create(endpoint, parameters)
-
-            nw_connection_set_queue(connection, dispatch_get_main_queue())
-            var called = false
-            nw_connection_set_state_changed_handler(connection) { state, error ->
-                when {
-                    error != null -> if (!called) {
-                        called = true
-                        continuation.resumeWithException(error.toIOException())
-                    }
-                    state == nw_connection_state_ready -> if (!called) {
-                        called = true
-                        continuation.resume(IosTcpSocket(connection))
-                    }
-                }
+    override suspend fun connect(host: String, port: Int, tls: TcpSocket.TLS?): TcpSocket {
+        val connection = openClientConnection(host, port,
+            when (tls) {
+                null -> null
+                TcpSocket.TLS.SAFE -> NwTls(safe = true, auth = true)
+                TcpSocket.TLS.UNSAFE_CERTIFICATES -> NwTls(safe = false, auth = false)
             }
-            nw_connection_start(connection)
-        }
+        )
+        return IosTcpSocket(connection)
+    }
 }
 
-private fun nw_error_t.toIOException(): TcpSocket.IOException =
-    when (nw_error_get_error_domain(this)) {
-        nw_error_domain_posix -> when (nw_error_get_error_code(this)) {
-            ECONNREFUSED -> TcpSocket.IOException.ConnectionRefused()
-            ECONNRESET -> TcpSocket.IOException.ConnectionClosed()
-            else -> TcpSocket.IOException.Unknown(this?.debugDescription)
-        }
-        nw_error_domain_dns -> TcpSocket.IOException.Unknown("DNS: ${this?.debugDescription}")
-        nw_error_domain_tls -> TcpSocket.IOException.Unknown("TLS: ${this?.debugDescription}")
-        else -> TcpSocket.IOException.Unknown("Unknown: ${this?.debugDescription}")
-    }

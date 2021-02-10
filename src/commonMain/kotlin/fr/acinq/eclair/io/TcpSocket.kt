@@ -16,10 +16,12 @@ interface TcpSocket {
         class Unknown(message: String?, cause: Throwable? = null) : IOException(message ?: "Unknown", cause)
     }
 
-    suspend fun send(bytes: ByteArray?, flush: Boolean = true)
+    suspend fun send(bytes: ByteArray?, offset: Int, length: Int, flush: Boolean = true)
 
-    suspend fun receiveFully(buffer: ByteArray)
-    suspend fun receiveAvailable(buffer: ByteArray): Int
+    suspend fun receiveFully(buffer: ByteArray, offset: Int, length: Int)
+    suspend fun receiveAvailable(buffer: ByteArray, offset: Int, maxLength: Int): Int
+
+    suspend fun startTls(tls: TLS = TLS.SAFE): TcpSocket
 
     fun close()
 
@@ -35,6 +37,10 @@ interface TcpSocket {
         }
     }
 }
+
+suspend fun TcpSocket.send(bytes: ByteArray, flush: Boolean = true) = send(bytes, 0, bytes.size, flush)
+suspend fun TcpSocket.receiveFully(buffer: ByteArray) = receiveFully(buffer, 0, buffer.size)
+suspend fun TcpSocket.receiveAvailable(buffer: ByteArray) = receiveAvailable(buffer, 0, buffer.size)
 
 internal expect object PlatformSocketBuilder : TcpSocket.Builder
 

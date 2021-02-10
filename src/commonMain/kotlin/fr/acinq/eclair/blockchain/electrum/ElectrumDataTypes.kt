@@ -213,6 +213,7 @@ internal fun parseJsonResponse(request: ElectrumRequest, rpcResponse: JsonRPCRes
             error = rpcResponse.error
         )
     }
+    else if (rpcResponse.id != null && rpcResponse.id < 0 ) PingResponse
     else when (request) {
         is ServerVersion -> {
             val resultArray = rpcResponse.result.jsonArray

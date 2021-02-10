@@ -60,7 +60,7 @@ class Peer(
     val walletParams: WalletParams,
     val watcher: ElectrumWatcher,
     val db: Databases,
-    socketBuilder: TcpSocket.Builder,
+    socketBuilder: TcpSocket.Builder?,
     scope: CoroutineScope
 ) : CoroutineScope by scope {
     companion object {
@@ -68,7 +68,7 @@ class Peer(
         private val prologue = "lightning".encodeToByteArray()
     }
 
-    public var socketBuilder = socketBuilder
+    public var socketBuilder: TcpSocket.Builder? = socketBuilder
         set(value) {
             logger.debug { "n:$remoteNodeId swap socket builder=$value" }
             field = value
@@ -193,37 +193,34 @@ class Peer(
     }
 
     fun connect() {
-        if (connectionState.value == Connection.CLOSED) connectionJob = establishConnection()
+        if (connectionState.value == Connection.CLOSED) establishConnection()
         else logger.warning { "Peer is already connecting / connected" }
     }
 
     fun disconnect() {
-        launch {
-            connectionJob?.cancel()
-            connectionJob = null
-        }
+        socket?.close()
+        socket = null
     }
 
-
-    private var connectionJob: Job? = null
+    private var socket: TcpSocket? = null
     private fun establishConnection() = launch {
         logger.info { "n:$remoteNodeId connecting to ${walletParams.trampolineNode.host}" }
         _connectionState.value = Connection.ESTABLISHING
-        val socket = try {
-            socketBuilder.connect(walletParams.trampolineNode.host, walletParams.trampolineNode.port)
-        } catch (ex: TcpSocket.IOException) {
+        socket = try {
+            socketBuilder?.connect(walletParams.trampolineNode.host, walletParams.trampolineNode.port) ?: error("socket builder is null.")
+        } catch (ex: Throwable) {
             logger.warning { "n:$remoteNodeId TCP connect: ${ex.message}" }
             _connectionState.value = Connection.CLOSED
             return@launch
         }
 
+        val requiredSocket = socket
+        requireNotNull(requiredSocket) { "TCP socket is null." }
+
         fun closeSocket() {
-            if (_connectionState.value == Connection.CLOSED) {
-                logger.warning { "TCP socket is already closed." }
-                return
-            }
-            logger.warning { "n:$remoteNodeId closing TCP socket" }
-            socket.close()
+            if (_connectionState.value == Connection.CLOSED) return
+            logger.warning { "closing TCP socket." }
+            requiredSocket.close()
             _connectionState.value = Connection.CLOSED
             cancel()
         }
@@ -235,8 +232,8 @@ class Peer(
             handshake(
                 keyPair,
                 remoteNodeId.value.toByteArray(),
-                { s -> socket.receiveFully(s) },
-                { b -> socket.send(b) }
+                { s -> requiredSocket.receiveFully(s) },
+                { b -> requiredSocket.send(b) }
             )
         } catch (ex: TcpSocket.IOException) {
             logger.warning { "n:$remoteNodeId TCP handshake: ${ex.message}" }
@@ -247,7 +244,7 @@ class Peer(
 
         suspend fun send(message: ByteArray) {
             try {
-                session.send(message) { data, flush -> socket.send(data, flush) }
+                session.send(message) { data, flush -> requiredSocket.send(data, flush) }
             } catch (ex: TcpSocket.IOException) {
                 logger.warning { "n:$remoteNodeId TCP send: ${ex.message}" }
                 closeSocket()
@@ -273,7 +270,7 @@ class Peer(
         suspend fun listen() {
             try {
                 while (isActive) {
-                    val received = session.receive { size -> socket.receiveFully(size) }
+                    val received = session.receive { size -> requiredSocket.receiveFully(size) }
                     input.send(BytesReceived(received))
                 }
             } catch (ex: TcpSocket.IOException) {

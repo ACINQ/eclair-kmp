@@ -11,6 +11,7 @@ import fr.acinq.lightning.channel.Helpers.watchConfirmedIfNeeded
 import fr.acinq.lightning.channel.Helpers.watchSpentIfNeeded
 import fr.acinq.lightning.transactions.Scripts
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.*
+import fr.acinq.lightning.transactions.Transactions.weight2fee
 import fr.acinq.lightning.utils.BitField
 import fr.acinq.lightning.utils.UUID
 import fr.acinq.lightning.wire.ClosingSigned
@@ -49,8 +50,17 @@ data class CMD_FAIL_HTLC(override val id: Long, val reason: Reason, val commit: 
 object CMD_SIGN : Command()
 data class CMD_UPDATE_FEE(val feerate: FeeratePerKw, val commit: Boolean = false) : Command()
 
+data class ClosingFees(val preferred: Satoshi, val min: Satoshi, val max: Satoshi) {
+    constructor(preferred: Satoshi) : this(preferred, preferred, preferred)
+}
+
+data class ClosingFeerates(val preferred: FeeratePerKw, val min: FeeratePerKw, val max: FeeratePerKw) {
+    constructor(preferred: FeeratePerKw) : this(preferred, preferred / 2, preferred * 2)
+    fun computeFees(closingTxWeight: Int): ClosingFees = ClosingFees(weight2fee(preferred, closingTxWeight), weight2fee(min, closingTxWeight), weight2fee(max, closingTxWeight))
+}
+
 sealed class CloseCommand : Command()
-data class CMD_CLOSE(val scriptPubKey: ByteVector?) : CloseCommand()
+data class CMD_CLOSE(val scriptPubKey: ByteVector?, val feerates: ClosingFeerates?) : CloseCommand()
 object CMD_FORCECLOSE : CloseCommand()
 
 /*

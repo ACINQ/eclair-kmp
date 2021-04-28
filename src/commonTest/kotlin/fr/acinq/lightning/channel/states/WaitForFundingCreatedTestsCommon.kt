@@ -61,7 +61,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CMD_CLOSE`() {
         val (_, bob, _) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
-        val (bob1, actions1) = bob.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        val (bob1, actions1) = bob.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
         assertTrue { bob1 is Aborted }
         assertTrue { actions1.isEmpty() }
     }

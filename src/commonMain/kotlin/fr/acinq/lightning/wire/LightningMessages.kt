@@ -1044,7 +1044,10 @@ data class ClosingSigned(
         const val type: Long = 39
 
         @Suppress("UNCHECKED_CAST")
-        val readers = mapOf(ClosingSignedTlv.ChannelData.tag to ClosingSignedTlv.ChannelData.Companion as TlvValueReader<ClosingSignedTlv>)
+        val readers = mapOf(
+            ClosingSignedTlv.FeeRange.tag to ClosingSignedTlv.FeeRange.Companion as TlvValueReader<ClosingSignedTlv>,
+            ClosingSignedTlv.ChannelData.tag to ClosingSignedTlv.ChannelData.Companion as TlvValueReader<ClosingSignedTlv>
+        )
 
         override fun read(input: Input): ClosingSigned {
             return ClosingSigned(

@@ -146,7 +146,7 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
     fun `recv CMD_CLOSE`() {
         val (alice, bob) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
         listOf(alice, bob).forEach { state ->
-            val (state1, actions1) = state.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+            val (state1, actions1) = state.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
             assertEquals(state, state1)
             actions1.hasCommandError<CommandUnavailableInThisState>()
         }

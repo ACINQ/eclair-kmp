@@ -173,32 +173,38 @@ object TestsHelper {
         return Pair(alice as Normal, bob as Normal)
     }
 
-    fun mutualClose(
-        alice: Normal,
-        bob: Normal,
-        tweakFees: Boolean = false,
-        scriptPubKey: ByteVector? = null
-    ): Triple<Negotiating, Negotiating, ClosingSigned> {
-        val alice1 = alice.updateFeerate(if (tweakFees) FeeratePerKw(4_319.sat) else FeeratePerKw(10_000.sat))
-        val bob1 = bob.updateFeerate(if (tweakFees) FeeratePerKw(4_319.sat) else FeeratePerKw(10_000.sat))
+    fun mutualCloseAlice(alice: Normal, bob: Normal, scriptPubKey: ByteVector? = null, feerates: ClosingFeerates? = null): Triple<Negotiating, Negotiating, ClosingSigned> {
+        val (alice1, actionsAlice1) = alice.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(scriptPubKey, feerates)))
+        assertTrue(alice1 is Normal)
+        val shutdownAlice = actionsAlice1.findOutgoingMessage<Shutdown>()
+        assertNull(actionsAlice1.findOutgoingMessageOpt<ClosingSigned>())
 
-        // Bob is fundee and initiates the closing
-        val (bob2, actions) = bob1.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(scriptPubKey)))
-        assertTrue(bob2 is Normal)
-        val shutdown = actions.findOutgoingMessage<Shutdown>()
+        val (bob1, actionsBob1) = bob.process(ChannelEvent.MessageReceived(shutdownAlice))
+        assertTrue(bob1 is Negotiating)
+        val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
+        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingSigned>())
 
-        // Alice is funder, she will sign the first closing tx
-        val (alice2, actions1) = alice1.process(ChannelEvent.MessageReceived(shutdown))
+        val (alice2, actionsAlice2) = alice1.process(ChannelEvent.MessageReceived(shutdownBob))
         assertTrue(alice2 is Negotiating)
-        val shutdown1 = actions1.findOutgoingMessage<Shutdown>()
-        val closingSigned = actions1.findOutgoingMessage<ClosingSigned>()
+        val closingSignedAlice = actionsAlice2.findOutgoingMessage<ClosingSigned>()
+        return Triple(alice2, bob1, closingSignedAlice)
+    }
 
-        val alice3 = alice2.updateFeerate(if (tweakFees) FeeratePerKw(4_316.sat) else FeeratePerKw(5_000.sat))
-        val bob3 = bob2.updateFeerate(if (tweakFees) FeeratePerKw(4_316.sat) else FeeratePerKw(5_000.sat))
+    fun mutualCloseBob(alice: Normal, bob: Normal, scriptPubKey: ByteVector? = null, feerates: ClosingFeerates? = null): Triple<Negotiating, Negotiating, ClosingSigned> {
+        val (bob1, actionsBob1) = bob.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(scriptPubKey, feerates)))
+        assertTrue(bob1 is Normal)
+        val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
+        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingSigned>())
 
-        val (bob4, _) = bob3.process(ChannelEvent.MessageReceived(shutdown1))
-        assertTrue(bob4 is Negotiating)
-        return Triple(alice3, bob4, closingSigned)
+        val (alice1, actionsAlice1) = alice.process(ChannelEvent.MessageReceived(shutdownBob))
+        assertTrue(alice1 is Negotiating)
+        val shutdownAlice = actionsAlice1.findOutgoingMessage<Shutdown>()
+        val closingSignedAlice = actionsAlice1.findOutgoingMessage<ClosingSigned>()
+
+        val (bob2, actionsBob2) = bob1.process(ChannelEvent.MessageReceived(shutdownAlice))
+        assertTrue(bob2 is Negotiating)
+        assertNull(actionsBob2.findOutgoingMessageOpt<ClosingSigned>())
+        return Triple(alice1, bob2, closingSignedAlice)
     }
 
     fun localClose(s: ChannelState): Pair<Closing, LocalCommitPublished> {

@@ -25,7 +25,7 @@ import fr.acinq.lightning.utils.msat
 import fr.acinq.lightning.utils.sat
 import kotlin.test.*
 
-class ChannelTypesTestsCommon : LightningTestSuite() {
+class ChannelDataTestsCommon : LightningTestSuite() {
 
     @Test
     fun `standard channel features include deterministic channel key path`() {

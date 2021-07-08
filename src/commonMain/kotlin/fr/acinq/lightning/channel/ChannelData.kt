@@ -18,52 +18,6 @@ import fr.acinq.lightning.wire.FailureMessage
 import fr.acinq.lightning.wire.OnionRoutingPacket
 import kotlinx.serialization.Serializable
 
-/*
-       .d8888b.   .d88888b.  888b     d888 888b     d888        d8888 888b    888 8888888b.   .d8888b.
-      d88P  Y88b d88P" "Y88b 8888b   d8888 8888b   d8888       d88888 8888b   888 888  "Y88b d88P  Y88b
-      888    888 888     888 88888b.d88888 88888b.d88888      d88P888 88888b  888 888    888 Y88b.
-      888        888     888 888Y88888P888 888Y88888P888     d88P 888 888Y88b 888 888    888  "Y888b.
-      888        888     888 888 Y888P 888 888 Y888P 888    d88P  888 888 Y88b888 888    888     "Y88b.
-      888    888 888     888 888  Y8P  888 888  Y8P  888   d88P   888 888  Y88888 888    888       "888
-      Y88b  d88P Y88b. .d88P 888   "   888 888   "   888  d8888888888 888   Y8888 888  .d88P Y88b  d88P
-       "Y8888P"   "Y88888P"  888       888 888       888 d88P     888 888    Y888 8888888P"   "Y8888P"
- */
-
-sealed class Command
-
-data class CMD_ADD_HTLC(val amount: MilliSatoshi, val paymentHash: ByteVector32, val cltvExpiry: CltvExpiry, val onion: OnionRoutingPacket, val paymentId: UUID, val commit: Boolean = false) : Command()
-
-sealed class HtlcSettlementCommand : Command() {
-    abstract val id: Long
-}
-
-data class CMD_FULFILL_HTLC(override val id: Long, val r: ByteVector32, val commit: Boolean = false) : HtlcSettlementCommand()
-data class CMD_FAIL_MALFORMED_HTLC(override val id: Long, val onionHash: ByteVector32, val failureCode: Int, val commit: Boolean = false) : HtlcSettlementCommand()
-data class CMD_FAIL_HTLC(override val id: Long, val reason: Reason, val commit: Boolean = false) : HtlcSettlementCommand() {
-    sealed class Reason {
-        data class Bytes(val bytes: ByteVector) : Reason()
-        data class Failure(val message: FailureMessage) : Reason()
-    }
-}
-
-object CMD_SIGN : Command()
-data class CMD_UPDATE_FEE(val feerate: FeeratePerKw, val commit: Boolean = false) : Command()
-
-sealed class CloseCommand : Command()
-data class CMD_CLOSE(val scriptPubKey: ByteVector?) : CloseCommand()
-object CMD_FORCECLOSE : CloseCommand()
-
-/*
-      8888888b.        d8888 88888888888     d8888
-      888  "Y88b      d88888     888        d88888
-      888    888     d88P888     888       d88P888
-      888    888    d88P 888     888      d88P 888
-      888    888   d88P  888     888     d88P  888
-      888    888  d88P   888     888    d88P   888
-      888  .d88P d8888888888     888   d8888888888
-      8888888P" d88P     888     888  d88P     888
- */
-
 /**
  * Details about a force-close where we published our commitment.
  *

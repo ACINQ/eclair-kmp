@@ -2,8 +2,8 @@ package fr.acinq.lightning.crypto
 
 import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.crypto.Pack
+import fr.acinq.lightning.channel.ChannelConfig
 import fr.acinq.lightning.channel.ChannelKeys
-import fr.acinq.lightning.channel.ChannelVersion
 import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import kotlin.test.Test
@@ -94,7 +94,7 @@ class LocalKeyManagerTestsCommon : LightningTestSuite() {
         val fundingPub = keyManager.fundingPublicKey(fundingKeyPath)
 
         val localParams = TestConstants.Alice.channelParams.copy(channelKeys = keyManager.channelKeys(fundingKeyPath))
-        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelVersion.STANDARD)
+        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelConfig.standard)
 
         assertEquals(fundingPub.publicKey, PrivateKey.fromHex("730c0f99408dbfbff00146acf84183ce539fabeeb22c143212f459d71374f715").publicKey())
         assertEquals(keyManager.revocationPoint(channelKeyPath).publicKey, PrivateKey.fromHex("ef2aa0a9b4d0bdbc5ee5025f0d16285dc9d17228af1b2cc1e1456252c2d9d207").publicKey())
@@ -112,7 +112,7 @@ class LocalKeyManagerTestsCommon : LightningTestSuite() {
         val fundingPub = keyManager.fundingPublicKey(fundingKeyPath)
 
         val localParams = TestConstants.Alice.channelParams.copy(channelKeys = keyManager.channelKeys(fundingKeyPath))
-        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelVersion.STANDARD)
+        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelConfig.standard)
 
         assertEquals(fundingPub.publicKey, PrivateKey.fromHex("cd85f39fad742e5c742eeab16f5f1acaa9d9c48977767c7daa4708a47b7222ec").publicKey())
         assertEquals(keyManager.revocationPoint(channelKeyPath).publicKey, PrivateKey.fromHex("ee211f583f3b1b1fb10dca7c82708d985fde641e83e28080f669eb496de85113").publicKey())
@@ -130,7 +130,7 @@ class LocalKeyManagerTestsCommon : LightningTestSuite() {
         val fundingPub = keyManager.fundingPublicKey(fundingKeyPath)
 
         val localParams = TestConstants.Alice.channelParams.copy(channelKeys = keyManager.channelKeys(fundingKeyPath))
-        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelVersion.STANDARD)
+        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelConfig.standard)
 
         assertEquals(fundingPub.publicKey, PrivateKey.fromHex("b3b3f1af2ef961ee7aa62451a93a1fd57ea126c81008e5d95ced822cca30da6e").publicKey())
         assertEquals(keyManager.revocationPoint(channelKeyPath).publicKey, PrivateKey.fromHex("119ae90789c0b9a68e5cfa2eee08b62cc668b2cd758403dfa7eabde1dc0b6d0a").publicKey())
@@ -148,7 +148,7 @@ class LocalKeyManagerTestsCommon : LightningTestSuite() {
         val fundingPub = keyManager.fundingPublicKey(fundingKeyPath)
 
         val localParams = TestConstants.Alice.channelParams.copy(channelKeys = keyManager.channelKeys(fundingKeyPath))
-        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelVersion.STANDARD)
+        val channelKeyPath = keyManager.channelKeyPath(localParams, ChannelConfig.standard)
 
         assertEquals(fundingPub.publicKey, PrivateKey.fromHex("033880995016c275e725da625e4a78ea8c3215ab8ea54145fa3124bbb2e4a3d4").publicKey())
         assertEquals(keyManager.revocationPoint(channelKeyPath).publicKey, PrivateKey.fromHex("16d8dd5e6a22de173288cdb7905cfbbcd9efab99471eb735ff95cb7fbdf43e45").publicKey())

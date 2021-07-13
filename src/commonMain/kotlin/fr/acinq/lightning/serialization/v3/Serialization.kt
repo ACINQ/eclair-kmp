@@ -1,22 +1,32 @@
-package fr.acinq.lightning.serialization.v1
+package fr.acinq.lightning.serialization.v3
 
 import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.PrivateKey
+import fr.acinq.bitcoin.crypto.Pack
+import fr.acinq.bitcoin.io.ByteArrayInput
+import fr.acinq.bitcoin.io.ByteArrayOutput
+import fr.acinq.bitcoin.io.readNBytes
 import fr.acinq.lightning.NodeParams
 import fr.acinq.lightning.crypto.ChaCha20Poly1305
 import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.cbor.Cbor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.AbstractDecoder
+import kotlinx.serialization.encoding.AbstractEncoder
+import kotlinx.serialization.encoding.CompositeDecoder
+import kotlinx.serialization.encoding.CompositeEncoder
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.contextual
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 
 object Serialization {
+    private const val versionMagic = 3
+
     /**
      * Versioned serialized data.
      *
@@ -96,15 +106,16 @@ object Serialization {
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    val cbor = Cbor {
-        serializersModule = serializationModules
-    }
-
-    @OptIn(ExperimentalSerializationApi::class)
     fun serialize(state: ChannelStateWithCommitments): ByteArray {
-        val raw = cbor.encodeToByteArray(ChannelStateWithCommitments.serializer(), state)
-        val versioned = SerializedData(version = 1, data = raw.toByteVector())
-        return cbor.encodeToByteArray(SerializedData.serializer(), versioned)
+        val output = ByteArrayOutput()
+        val encoder = DataOutputEncoder(output)
+        encoder.encodeSerializableValue(ChannelStateWithCommitments.serializer(), state)
+        val bytes = output.toByteArray()
+        val versioned = SerializedData(version = versionMagic, data = bytes.toByteVector())
+        val output1 = ByteArrayOutput()
+        val encoder1 = DataOutputEncoder(output1)
+        encoder1.encodeSerializableValue(SerializedData.serializer(), versioned)
+        return output1.toByteArray()
     }
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -114,9 +125,15 @@ object Serialization {
 
     @OptIn(ExperimentalSerializationApi::class)
     fun deserialize(bin: ByteArray, nodeParams: NodeParams): fr.acinq.lightning.channel.ChannelStateWithCommitments {
-        val versioned = cbor.decodeFromByteArray(SerializedData.serializer(), bin)
+        val input = ByteArrayInput(bin)
+        val decoder = DataInputDecoder(input)
+        val versioned = decoder.decodeSerializableValue(SerializedData.serializer())
         return when (versioned.version) {
-            1 -> cbor.decodeFromByteArray(ChannelStateWithCommitments.serializer(), versioned.data.toByteArray()).export(nodeParams)
+            versionMagic -> {
+                val input1 = ByteArrayInput(versioned.data.toByteArray())
+                val decoder1 = DataInputDecoder(input1)
+                decoder1.decodeSerializableValue(ChannelStateWithCommitments.serializer()).export(nodeParams)
+            }
             else -> error("unknown serialization version ${versioned.version}")
         }
     }
@@ -158,4 +175,73 @@ object Serialization {
 
     fun decrypt(key: PrivateKey, data: ByteArray, nodeParams: NodeParams): fr.acinq.lightning.channel.ChannelStateWithCommitments = decrypt(key.value, data, nodeParams)
     fun decrypt(key: PrivateKey, backup: EncryptedChannelData, nodeParams: NodeParams): fr.acinq.lightning.channel.ChannelStateWithCommitments = decrypt(key, backup.data.toByteArray(), nodeParams)
+
+    @OptIn(ExperimentalSerializationApi::class)
+    class DataOutputEncoder(val output: ByteArrayOutput) : AbstractEncoder() {
+        override val serializersModule: SerializersModule = serializationModules
+        override fun encodeBoolean(value: Boolean) = output.write(if (value) 1 else 0)
+        override fun encodeByte(value: Byte) = output.write(value.toInt())
+        override fun encodeShort(value: Short) = output.write(Pack.writeInt16BE(value))
+        override fun encodeInt(value: Int) = output.write(Pack.writeInt32BE(value))
+        override fun encodeLong(value: Long) = output.write(Pack.writeInt64BE(value))
+        override fun encodeFloat(value: Float) {
+            TODO()
+        }
+
+        override fun encodeDouble(value: Double) {
+            TODO()
+        }
+
+        override fun encodeChar(value: Char) = output.write(value.toInt())
+        override fun encodeString(value: String) {
+            val bytes = value.encodeToByteArray()
+            encodeInt(bytes.size)
+            output.write(bytes)
+        }
+
+        override fun encodeEnum(enumDescriptor: SerialDescriptor, index: Int) = output.write(index)
+        override fun beginCollection(descriptor: SerialDescriptor, collectionSize: Int): CompositeEncoder {
+            encodeInt(collectionSize)
+            return this
+        }
+
+        override fun encodeNull() = encodeBoolean(false)
+        override fun encodeNotNullMark() = encodeBoolean(true)
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    @ExperimentalSerializationApi
+    class DataInputDecoder(val input: ByteArrayInput, var elementsCount: Int = 0) : AbstractDecoder() {
+        private var elementIndex = 0
+        override val serializersModule: SerializersModule = serializationModules
+        override fun decodeBoolean(): Boolean = input.read() != 0
+        override fun decodeByte(): Byte = input.read().toByte()
+        override fun decodeShort(): Short = Pack.int16BE(input.readNBytes(2))
+        override fun decodeInt(): Int = Pack.int32BE(input.readNBytes(4))
+        override fun decodeLong(): Long = Pack.int64BE(input.readNBytes(8))
+        override fun decodeFloat(): Float = TODO()
+        override fun decodeDouble(): Double = TODO()
+        override fun decodeChar(): Char = input.read().toChar()
+        override fun decodeString(): String {
+            val len = decodeInt()
+            require(len <= input.availableBytes)
+            val decoded = input.readNBytes(len).decodeToString()
+            return decoded
+        }
+
+        override fun decodeEnum(enumDescriptor: SerialDescriptor): Int = input.read()
+        override fun decodeElementIndex(descriptor: SerialDescriptor): Int {
+            if (elementIndex == elementsCount) return CompositeDecoder.DECODE_DONE
+            return elementIndex++
+        }
+
+        override fun beginStructure(descriptor: SerialDescriptor): CompositeDecoder = DataInputDecoder(input, descriptor.elementsCount)
+        override fun decodeSequentially(): Boolean = true
+        override fun decodeCollectionSize(descriptor: SerialDescriptor): Int = decodeInt().also {
+            require(it <= input.availableBytes)
+            elementsCount = it
+        }
+
+        override fun decodeNotNullMark(): Boolean = decodeBoolean()
+    }
 }

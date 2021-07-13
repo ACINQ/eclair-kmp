@@ -2,6 +2,7 @@ package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
 import fr.acinq.lightning.blockchain.WatchConfirmed
@@ -22,14 +23,14 @@ class OfflineTestsCommon : LightningTestSuite() {
 
     @Test
     fun `handle disconnect - connect events (no messages sent yet)`() {
-        val (alice, bob) = TestsHelper.reachNormal()
+        val (alice, bob) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
         val (alice1, _) = alice.processEx(ChannelEvent.Disconnected)
         val (bob1, _) = bob.processEx(ChannelEvent.Disconnected)
         assertTrue(alice1 is Offline)
         assertTrue(bob1 is Offline)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob.commitments.localParams.features.toByteArray()))
 
         val (alice2, actions) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -41,11 +42,11 @@ class OfflineTestsCommon : LightningTestSuite() {
         val bobCommitments = bob.commitments
         val aliceCommitments = alice.commitments
         val bobCurrentPerCommitmentPoint = bob.keyManager.commitmentPoint(
-            bob.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelVersion),
+            bob.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelConfig),
             bobCommitments.localCommit.index
         )
         val aliceCurrentPerCommitmentPoint = alice.keyManager.commitmentPoint(
-            alice.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelVersion),
+            alice.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelConfig),
             aliceCommitments.localCommit.index
         )
 
@@ -75,7 +76,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `re-send update and sig after first commitment`() {
         val (alice0, bob0) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val cmdAdd = CMD_ADD_HTLC(1_000_000.msat, ByteVector32.Zeroes, CltvExpiryDelta(144).toCltvExpiry(alice0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID())
             val (alice1, actions1) = alice0.processEx(ChannelEvent.ExecuteCommand(cmdAdd))
             val add = actions1.hasOutgoingMessage<UpdateAddHtlc>()
@@ -93,8 +94,8 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertTrue(alice1 is Offline)
         assertTrue(bob1 is Offline)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice0.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob0.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice2) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -106,11 +107,11 @@ class OfflineTestsCommon : LightningTestSuite() {
         val bobCommitments = bob0.commitments
         val aliceCommitments = alice0.commitments
         val bobCurrentPerCommitmentPoint = bob0.keyManager.commitmentPoint(
-            bob0.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelVersion),
+            bob0.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelConfig),
             bobCommitments.localCommit.index
         )
         val aliceCurrentPerCommitmentPoint = alice0.keyManager.commitmentPoint(
-            alice0.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelVersion),
+            alice0.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelConfig),
             aliceCommitments.localCommit.index
         )
 
@@ -153,7 +154,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `re-send lost revocation`() {
         val (alice0, bob0) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val cmdAdd = CMD_ADD_HTLC(1_000_000.msat, ByteVector32.Zeroes, CltvExpiryDelta(144).toCltvExpiry(alice0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID())
             val (alice1, actionsAlice1) = alice0.processEx(ChannelEvent.ExecuteCommand(cmdAdd))
             val add = actionsAlice1.hasOutgoingMessage<UpdateAddHtlc>()
@@ -176,8 +177,8 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertTrue(alice1 is Offline)
         assertTrue(bob1 is Offline)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice0.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob0.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice2) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -189,11 +190,11 @@ class OfflineTestsCommon : LightningTestSuite() {
         val bobCommitments = bob0.commitments
         val aliceCommitments = alice0.commitments
         val bobCurrentPerCommitmentPoint = bob0.keyManager.commitmentPoint(
-            bob0.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelVersion),
+            bob0.keyManager.channelKeyPath(bobCommitments.localParams, bobCommitments.channelConfig),
             bobCommitments.localCommit.index
         )
         val aliceCurrentPerCommitmentPoint = alice0.keyManager.commitmentPoint(
-            alice0.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelVersion),
+            alice0.keyManager.channelKeyPath(aliceCommitments.localParams, aliceCommitments.channelConfig),
             aliceCommitments.localCommit.index
         )
 
@@ -227,7 +228,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `resume htlc settlement`() {
         val (alice0, bob0, revB) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val (nodes1, r1, htlc1) = TestsHelper.addHtlc(15_000_000.msat, bob0, alice0)
             val (bob1, alice1) = TestsHelper.crossSign(nodes1.first, nodes1.second)
             val (bob2, alice2) = TestsHelper.fulfillHtlc(htlc1.id, r1, bob1, alice1)
@@ -290,7 +291,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `discover that we have a revoked commitment`() {
         val (alice, aliceOld, bob) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val (nodes1, r1, htlc1) = TestsHelper.addHtlc(250_000_000.msat, alice0, bob0)
             val (alice1, bob1) = TestsHelper.crossSign(nodes1.first, nodes1.second)
             val (nodes2, r2, htlc2) = TestsHelper.addHtlc(100_000_000.msat, alice1, bob1)
@@ -305,6 +306,8 @@ class OfflineTestsCommon : LightningTestSuite() {
             val (bob7, alice7) = TestsHelper.crossSign(bob6, alice6)
             val (alice8, bob8) = TestsHelper.fulfillHtlc(htlc3.id, r3, alice7, bob7)
             val (bob9, alice9) = TestsHelper.crossSign(bob8, alice8)
+            assertTrue(alice9 is Normal)
+            assertTrue(bob9 is Normal)
             Triple(alice9, alice3, bob9)
         }
 
@@ -315,8 +318,8 @@ class OfflineTestsCommon : LightningTestSuite() {
         // we manually replace alice's state with an older one
         val alice1 = aliceTmp1.copy(state = aliceOld)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice2) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -352,14 +355,14 @@ class OfflineTestsCommon : LightningTestSuite() {
 
     @Test
     fun `counterparty lies about having a more recent commitment`() {
-        val (alice0, bob0) = TestsHelper.reachNormal()
+        val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
         val (alice1, _) = alice0.processEx(ChannelEvent.Disconnected)
         val (bob1, _) = bob0.processEx(ChannelEvent.Disconnected)
         assertTrue(alice1 is Offline)
         assertTrue(bob1 is Offline)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice0.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob0.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice2) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -382,7 +385,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `reprocess pending incoming htlcs after disconnection or wallet restart`() {
         val (alice, bob, htlcs) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val (aliceId, bobId) = Pair(alice0.staticParams.nodeParams.nodeId, bob0.staticParams.nodeParams.nodeId)
             val currentBlockHeight = alice0.currentBlockHeight.toLong()
             // We add some htlcs Alice ---> Bob
@@ -415,8 +418,8 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertEquals(alice.commitments.commitInput.outPoint.txid, getFundingTx.txid)
         assertTrue(alice1 is Offline)
 
-        val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice2) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
         assertTrue(alice2 is Syncing)
@@ -444,7 +447,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `reprocess pending incoming htlcs after disconnection or wallet restart (htlc settlement signed by us)`() {
         val (alice, bob, htlcs) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal()
+            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
             val (aliceId, bobId) = Pair(alice0.staticParams.nodeParams.nodeId, bob0.staticParams.nodeParams.nodeId)
             val currentBlockHeight = alice0.currentBlockHeight.toLong()
             val preimage = randomBytes32()
@@ -469,8 +472,8 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertTrue(alice1 is Offline)
         assertTrue(bob1 is Offline)
 
-        val aliceInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-        val bobInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+        val aliceInit = Init(ByteVector(alice.commitments.localParams.features.toByteArray()))
+        val bobInit = Init(ByteVector(bob.commitments.localParams.features.toByteArray()))
 
         val (alice2, actionsAlice) = alice1.processEx(ChannelEvent.Connected(aliceInit, bobInit))
         val (bob2, _) = bob1.processEx(ChannelEvent.Connected(bobInit, aliceInit))
@@ -488,6 +491,27 @@ class OfflineTestsCommon : LightningTestSuite() {
         actionsBob.hasOutgoingMessage<CommitSig>()
         assertEquals(listOf(ChannelAction.ProcessIncomingHtlc(htlcs[2])), actionsBob.filterIsInstance<ChannelAction.ProcessIncomingHtlc>())
         actionsBob.hasWatch<WatchConfirmed>()
+    }
+
+    @Test
+    fun `wait for their channel reestablish when using channel backup`() {
+        val (alice, bob) = TestsHelper.reachNormal()
+        assertTrue(bob.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
+        val (alice1, _) = alice.processEx(ChannelEvent.Disconnected)
+        val (bob1, _) = bob.processEx(ChannelEvent.Disconnected)
+        assertTrue(alice1 is Offline)
+        assertTrue(bob1 is Offline)
+
+        val localInit = Init(ByteVector(alice.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob.commitments.localParams.features.toByteArray()))
+
+        val (alice2, actions) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
+        assertTrue(alice2 is Syncing)
+        actions.findOutgoingMessage<ChannelReestablish>()
+        val (bob2, actions1) = bob1.processEx(ChannelEvent.Connected(remoteInit, localInit))
+        assertTrue(bob2 is Syncing)
+        // Bob waits to receive Alice's channel reestablish before sending his own.
+        assertTrue(actions1.isEmpty())
     }
 
     @Test

@@ -6,9 +6,11 @@ import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
-import fr.acinq.lightning.channel.*
+import fr.acinq.lightning.channel.ChannelKeys
+import fr.acinq.lightning.channel.Commitments
+import fr.acinq.lightning.channel.LocalParams
+import fr.acinq.lightning.channel.RemoteParams
 import fr.acinq.lightning.crypto.Generators
-import fr.acinq.lightning.crypto.KeyManager
 import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcSuccessTx
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx
@@ -27,8 +29,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AnchorOutputsTestsCommon {
-    val channelVersion = ChannelVersion.STANDARD
-
     val local_funding_privkey = PrivateKey.fromHex("30ff4956bbdd3222d44cc5e8a1261dab1e07957bdac5ae88fe3261ef321f374901")
     val local_funding_pubkey = PublicKey.fromHex(" 023da092f6980e58d2c037173180e9a465476026ee50f96695963e8efe436f54eb")
     val remote_funding_pubkey = PublicKey.fromHex("030e9f7b623d2ccc7c9bd44d66d5ce21ce504c0acf6385a132cec6d3c39fa711c1")
@@ -56,7 +56,7 @@ class AnchorOutputsTestsCommon {
     val local_delayed_privkey = PrivateKey.fromHex("adf3464ce9c2f230fd2582fda4c6965e4993ca5524e8c9580e3df0cf226981ad01")
 
     val local_htlc_privkey = Generators.derivePrivKey(local_payment_basepoint_secret, local_per_commitment_point)
-    val local_payment_privkey = if (channelVersion.hasStaticRemotekey) local_payment_basepoint_secret else local_htlc_privkey
+    val local_payment_privkey = local_payment_basepoint_secret
     val local_delayed_payment_privkey = Generators.derivePrivKey(local_delayed_payment_basepoint_secret, local_per_commitment_point)
 
     val remote_htlc_privkey = Generators.derivePrivKey(remote_payment_basepoint_secret, local_per_commitment_point)

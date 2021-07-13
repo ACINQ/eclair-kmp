@@ -43,16 +43,12 @@ sealed class ChannelEvent {
         val localParams: LocalParams,
         val remoteInit: Init,
         val channelFlags: Byte,
-        val channelVersion: ChannelVersion,
+        val channelConfig: ChannelConfig,
+        val channelType: ChannelType.SupportedChannelType,
         val channelOrigin: ChannelOrigin? = null
-    ) : ChannelEvent() {
-        init {
-            require(channelVersion.hasStaticRemotekey) { "channel version $channelVersion is invalid (static_remote_key is not set)" }
-            require(channelVersion.hasAnchorOutputs) { "invalid channel version $channelVersion (anchor_outputs is not set)" }
-        }
-    }
+    ) : ChannelEvent()
 
-    data class InitFundee(val temporaryChannelId: ByteVector32, val localParams: LocalParams, val remoteInit: Init) : ChannelEvent()
+    data class InitFundee(val temporaryChannelId: ByteVector32, val localParams: LocalParams, val channelConfig: ChannelConfig, val remoteInit: Init) : ChannelEvent()
     data class Restore(val state: ChannelState) : ChannelEvent()
     object CheckHtlcTimeout : ChannelEvent()
     data class MessageReceived(val message: LightningMessage) : ChannelEvent()
@@ -225,7 +221,7 @@ sealed class ChannelState {
 
     /** Update outgoing messages to include an encrypted backup when necessary. */
     private fun updateActions(actions: List<ChannelAction>): List<ChannelAction> = when {
-        this is ChannelStateWithCommitments && this.isZeroReserve -> actions.map {
+        this is ChannelStateWithCommitments && staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient) -> actions.map {
             when {
                 it is ChannelAction.Message.Send && it.message is FundingSigned -> it.copy(message = it.message.withChannelData(Serialization.encrypt(privateKey.value, this)))
                 it is ChannelAction.Message.Send && it.message is CommitSig -> it.copy(message = it.message.withChannelData(Serialization.encrypt(privateKey.value, this)))
@@ -324,7 +320,6 @@ sealed class ChannelStateWithCommitments : ChannelState() {
     abstract val commitments: Commitments
     val channelId: ByteVector32 get() = commitments.channelId
     val isFunder: Boolean get() = commitments.localParams.isFunder
-    val isZeroReserve: Boolean get() = commitments.isZeroReserve
 
     abstract fun updateCommitments(input: Commitments): ChannelStateWithCommitments
 
@@ -574,43 +569,51 @@ data class WaitForInit(override val staticParams: StaticParams, override val cur
     override fun processInternal(event: ChannelEvent): Pair<ChannelState, List<ChannelAction>> {
         return when {
             event is ChannelEvent.InitFundee -> {
-                val nextState = WaitForOpenChannel(staticParams, currentTip, currentOnChainFeerates, event.temporaryChannelId, event.localParams, event.remoteInit)
+                val nextState = WaitForOpenChannel(staticParams, currentTip, currentOnChainFeerates, event.temporaryChannelId, event.localParams, event.channelConfig, event.remoteInit)
                 Pair(nextState, listOf())
             }
             event is ChannelEvent.InitFunder -> {
-                val fundingPubKey = event.localParams.channelKeys.fundingPubKey
-                val paymentBasepoint = event.localParams.channelKeys.paymentBasepoint
-                val open = OpenChannel(
-                    staticParams.nodeParams.chainHash,
-                    temporaryChannelId = event.temporaryChannelId,
-                    fundingSatoshis = event.fundingAmount,
-                    pushMsat = event.pushAmount,
-                    dustLimitSatoshis = event.localParams.dustLimit,
-                    maxHtlcValueInFlightMsat = event.localParams.maxHtlcValueInFlightMsat,
-                    channelReserveSatoshis = event.localParams.channelReserve,
-                    htlcMinimumMsat = event.localParams.htlcMinimum,
-                    feeratePerKw = event.initialFeerate,
-                    toSelfDelay = event.localParams.toSelfDelay,
-                    maxAcceptedHtlcs = event.localParams.maxAcceptedHtlcs,
-                    fundingPubkey = fundingPubKey,
-                    revocationBasepoint = event.localParams.channelKeys.revocationBasepoint,
-                    paymentBasepoint = paymentBasepoint,
-                    delayedPaymentBasepoint = event.localParams.channelKeys.delayedPaymentBasepoint,
-                    htlcBasepoint = event.localParams.channelKeys.htlcBasepoint,
-                    firstPerCommitmentPoint = keyManager.commitmentPoint(event.localParams.channelKeys.shaSeed, 0),
-                    channelFlags = event.channelFlags,
-                    // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script.
-                    // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
-                    tlvStream = TlvStream(
-                        buildList {
-                            add(ChannelTlv.UpfrontShutdownScript(ByteVector.empty))
-                            if (event.channelVersion.isSet(ChannelVersion.ZERO_RESERVE_BIT)) add(ChannelTlv.ChannelVersionTlv(event.channelVersion))
-                            if (event.channelOrigin != null) add(ChannelTlv.ChannelOriginTlv(event.channelOrigin))
-                        }
-                    )
-                )
-                val nextState = WaitForAcceptChannel(staticParams, currentTip, currentOnChainFeerates, event, open)
-                Pair(nextState, listOf(ChannelAction.Message.Send(open)))
+                when (event.channelType) {
+                    ChannelType.SupportedChannelType.AnchorOutputs -> {
+                        val fundingPubKey = event.localParams.channelKeys.fundingPubKey
+                        val paymentBasepoint = event.localParams.channelKeys.paymentBasepoint
+                        val open = OpenChannel(
+                            staticParams.nodeParams.chainHash,
+                            temporaryChannelId = event.temporaryChannelId,
+                            fundingSatoshis = event.fundingAmount,
+                            pushMsat = event.pushAmount,
+                            dustLimitSatoshis = event.localParams.dustLimit,
+                            maxHtlcValueInFlightMsat = event.localParams.maxHtlcValueInFlightMsat,
+                            channelReserveSatoshis = event.localParams.channelReserve,
+                            htlcMinimumMsat = event.localParams.htlcMinimum,
+                            feeratePerKw = event.initialFeerate,
+                            toSelfDelay = event.localParams.toSelfDelay,
+                            maxAcceptedHtlcs = event.localParams.maxAcceptedHtlcs,
+                            fundingPubkey = fundingPubKey,
+                            revocationBasepoint = event.localParams.channelKeys.revocationBasepoint,
+                            paymentBasepoint = paymentBasepoint,
+                            delayedPaymentBasepoint = event.localParams.channelKeys.delayedPaymentBasepoint,
+                            htlcBasepoint = event.localParams.channelKeys.htlcBasepoint,
+                            firstPerCommitmentPoint = keyManager.commitmentPoint(event.localParams.channelKeys.shaSeed, 0),
+                            channelFlags = event.channelFlags,
+                            tlvStream = TlvStream(
+                                buildList {
+                                    // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script.
+                                    // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
+                                    add(ChannelTlv.UpfrontShutdownScriptTlv(ByteVector.empty))
+                                    add(ChannelTlv.ChannelTypeTlv(event.channelType))
+                                    if (event.channelOrigin != null) add(ChannelTlv.ChannelOriginTlv(event.channelOrigin))
+                                }
+                            )
+                        )
+                        val nextState = WaitForAcceptChannel(staticParams, currentTip, currentOnChainFeerates, event, open)
+                        Pair(nextState, listOf(ChannelAction.Message.Send(open)))
+                    }
+                    else -> {
+                        logger.warning { "c:${event.temporaryChannelId} cannot open channel with invalid channel_type=${event.channelType.name}" }
+                        Pair(Aborted(staticParams, currentTip, currentOnChainFeerates), listOf())
+                    }
+                }
             }
             event is ChannelEvent.Restore && event.state is Closing && event.state.commitments.nothingAtStake() -> {
                 logger.info { "c:${event.state.channelId} we have nothing at stake, going straight to CLOSED" }
@@ -727,7 +730,8 @@ data class Offline(val state: ChannelStateWithCommitments) : ChannelState() {
                         val nextState = state.updateCommitments(state.commitments.updateFeatures(event.localInit, event.remoteInit))
                         Pair(nextState, listOf(ChannelAction.Message.Send(error)))
                     }
-                    state.isZeroReserve -> {
+                    staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient) -> {
+                        // We wait for them to go first, which lets us restore from the latest backup if we've lost data.
                         logger.info { "c:${state.channelId} syncing ${state::class}, waiting fo their channelReestablish message" }
                         val nextState = state.updateCommitments(state.commitments.updateFeatures(event.localInit, event.remoteInit))
                         Pair(Syncing(nextState, true), listOf())
@@ -882,7 +886,7 @@ data class Syncing(val state: ChannelStateWithCommitments, val waitForTheirReest
                             staticParams.nodeParams.minDepthBlocks
                         } else {
                             // when we're fundee we scale the min_depth confirmations depending on the funding amount
-                            if (state.commitments.isZeroReserve) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, state.commitments.commitInput.txOut.amount)
+                            if (state.commitments.channelFeatures.hasFeature(Feature.ZeroConfChannels)) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, state.commitments.commitInput.txOut.amount)
                         }
                         // we put back the watch (operation is idempotent) because the event may have been fired while we were in OFFLINE
                         val watchConfirmed = WatchConfirmed(
@@ -1151,6 +1155,7 @@ data class WaitForOpenChannel(
     override val currentOnChainFeerates: OnChainFeerates,
     val temporaryChannelId: ByteVector32,
     val localParams: LocalParams,
+    val channelConfig: ChannelConfig,
     val remoteInit: Init
 ) : ChannelState() {
     override fun processInternal(event: ChannelEvent): Pair<ChannelState, List<ChannelAction>> {
@@ -1158,72 +1163,76 @@ data class WaitForOpenChannel(
             event is ChannelEvent.MessageReceived ->
                 when (event.message) {
                     is OpenChannel -> {
-                        require(Features.canUseFeature(localParams.features, Features.invoke(remoteInit.features), Feature.StaticRemoteKey)) { "static_remote_key is not set" }
-                        val channelVersion = event.message.channelVersion ?: ChannelVersion.STANDARD
-                        require(channelVersion.hasStaticRemotekey) { "invalid channel version $channelVersion (static_remote_key is not set)" }
-                        require(channelVersion.hasAnchorOutputs) { "invalid channel version $channelVersion (anchor_outputs is not set)" }
-                        when (val err = Helpers.validateParamsFundee(staticParams.nodeParams, event.message, channelVersion)) {
+                        when (val res = Helpers.validateParamsFundee(staticParams.nodeParams, event.message, localParams, Features(remoteInit.features))) {
+                            is Either.Right -> {
+                                val channelFeatures = res.value
+                                val channelOrigin = event.message.tlvStream.records.filterIsInstance<ChannelTlv.ChannelOriginTlv>().firstOrNull()?.channelOrigin
+                                val fundingPubkey = localParams.channelKeys.fundingPubKey
+                                val minimumDepth = if (channelFeatures.hasFeature(Feature.ZeroConfChannels)) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, event.message.fundingSatoshis)
+                                val paymentBasepoint = localParams.channelKeys.paymentBasepoint
+                                val accept = AcceptChannel(
+                                    temporaryChannelId = event.message.temporaryChannelId,
+                                    dustLimitSatoshis = localParams.dustLimit,
+                                    maxHtlcValueInFlightMsat = localParams.maxHtlcValueInFlightMsat,
+                                    channelReserveSatoshis = localParams.channelReserve,
+                                    minimumDepth = minimumDepth.toLong(),
+                                    htlcMinimumMsat = localParams.htlcMinimum,
+                                    toSelfDelay = localParams.toSelfDelay,
+                                    maxAcceptedHtlcs = localParams.maxAcceptedHtlcs,
+                                    fundingPubkey = fundingPubkey,
+                                    revocationBasepoint = localParams.channelKeys.revocationBasepoint,
+                                    paymentBasepoint = paymentBasepoint,
+                                    delayedPaymentBasepoint = localParams.channelKeys.delayedPaymentBasepoint,
+                                    htlcBasepoint = localParams.channelKeys.htlcBasepoint,
+                                    firstPerCommitmentPoint = keyManager.commitmentPoint(keyManager.channelKeyPath(localParams, channelConfig), 0),
+                                    tlvStream = TlvStream(
+                                        listOf(
+                                            // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script.
+                                            // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
+                                            ChannelTlv.UpfrontShutdownScriptTlv(ByteVector.empty),
+                                            ChannelTlv.ChannelTypeTlv(channelFeatures.channelType),
+                                        )
+                                    ),
+                                )
+                                val remoteParams = RemoteParams(
+                                    nodeId = staticParams.remoteNodeId,
+                                    dustLimit = event.message.dustLimitSatoshis,
+                                    maxHtlcValueInFlightMsat = event.message.maxHtlcValueInFlightMsat,
+                                    channelReserve = event.message.channelReserveSatoshis, // remote requires local to keep this much satoshis as direct payment
+                                    htlcMinimum = event.message.htlcMinimumMsat,
+                                    toSelfDelay = event.message.toSelfDelay,
+                                    maxAcceptedHtlcs = event.message.maxAcceptedHtlcs,
+                                    fundingPubKey = event.message.fundingPubkey,
+                                    revocationBasepoint = event.message.revocationBasepoint,
+                                    paymentBasepoint = event.message.paymentBasepoint,
+                                    delayedPaymentBasepoint = event.message.delayedPaymentBasepoint,
+                                    htlcBasepoint = event.message.htlcBasepoint,
+                                    features = Features(remoteInit.features)
+                                )
+                                val nextState = WaitForFundingCreated(
+                                    staticParams,
+                                    currentTip,
+                                    currentOnChainFeerates,
+                                    event.message.temporaryChannelId,
+                                    localParams,
+                                    remoteParams,
+                                    event.message.fundingSatoshis,
+                                    event.message.pushMsat,
+                                    event.message.feeratePerKw,
+                                    event.message.firstPerCommitmentPoint,
+                                    event.message.channelFlags,
+                                    channelConfig,
+                                    channelFeatures,
+                                    channelOrigin,
+                                    accept
+                                )
+                                Pair(nextState, listOf(ChannelAction.Message.Send(accept)))
+                            }
                             is Either.Left -> {
-                                logger.error(err.value) { "c:$temporaryChannelId invalid ${event.message::class} in state ${this::class}" }
-                                return Pair(Aborted(staticParams, currentTip, currentOnChainFeerates), listOf(ChannelAction.Message.Send(Error(temporaryChannelId, err.value.message))))
+                                logger.error(res.value) { "c:$temporaryChannelId invalid ${event.message::class} in state ${this::class}" }
+                                Pair(Aborted(staticParams, currentTip, currentOnChainFeerates), listOf(ChannelAction.Message.Send(Error(temporaryChannelId, res.value.message))))
                             }
                         }
-                        val channelOrigin = event.message.tlvStream.records.filterIsInstance<ChannelTlv.ChannelOriginTlv>().firstOrNull()?.channelOrigin
-
-                        val fundingPubkey = localParams.channelKeys.fundingPubKey
-                        val minimumDepth = Helpers.minDepthForFunding(staticParams.nodeParams, event.message.fundingSatoshis)
-                        val paymentBasepoint = localParams.channelKeys.paymentBasepoint
-                        val accept = AcceptChannel(
-                            temporaryChannelId = event.message.temporaryChannelId,
-                            dustLimitSatoshis = localParams.dustLimit,
-                            maxHtlcValueInFlightMsat = localParams.maxHtlcValueInFlightMsat,
-                            channelReserveSatoshis = localParams.channelReserve,
-                            minimumDepth = minimumDepth.toLong(),
-                            htlcMinimumMsat = localParams.htlcMinimum,
-                            toSelfDelay = localParams.toSelfDelay,
-                            maxAcceptedHtlcs = localParams.maxAcceptedHtlcs,
-                            fundingPubkey = fundingPubkey,
-                            revocationBasepoint = localParams.channelKeys.revocationBasepoint,
-                            paymentBasepoint = paymentBasepoint,
-                            delayedPaymentBasepoint = localParams.channelKeys.delayedPaymentBasepoint,
-                            htlcBasepoint = localParams.channelKeys.htlcBasepoint,
-                            firstPerCommitmentPoint = keyManager.commitmentPoint(keyManager.channelKeyPath(localParams, channelVersion), 0),
-                            // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script.
-                            // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
-                            tlvStream = TlvStream(listOf(ChannelTlv.UpfrontShutdownScript(ByteVector.empty)))
-                        )
-                        val remoteParams = RemoteParams(
-                            nodeId = staticParams.remoteNodeId,
-                            dustLimit = event.message.dustLimitSatoshis,
-                            maxHtlcValueInFlightMsat = event.message.maxHtlcValueInFlightMsat,
-                            channelReserve = event.message.channelReserveSatoshis, // remote requires local to keep this much satoshis as direct payment
-                            htlcMinimum = event.message.htlcMinimumMsat,
-                            toSelfDelay = event.message.toSelfDelay,
-                            maxAcceptedHtlcs = event.message.maxAcceptedHtlcs,
-                            fundingPubKey = event.message.fundingPubkey,
-                            revocationBasepoint = event.message.revocationBasepoint,
-                            paymentBasepoint = event.message.paymentBasepoint,
-                            delayedPaymentBasepoint = event.message.delayedPaymentBasepoint,
-                            htlcBasepoint = event.message.htlcBasepoint,
-                            features = Features.invoke(remoteInit.features)
-                        )
-                        val nextState = WaitForFundingCreated(
-                            staticParams,
-                            currentTip,
-                            currentOnChainFeerates,
-                            event.message.temporaryChannelId,
-                            localParams,
-                            remoteParams,
-                            event.message.fundingSatoshis,
-                            event.message.pushMsat,
-                            event.message.feeratePerKw,
-                            event.message.firstPerCommitmentPoint,
-                            event.message.channelFlags,
-                            channelVersion,
-                            channelOrigin,
-                            accept
-                        )
-                        Pair(nextState, listOf(ChannelAction.Message.Send(accept)))
                     }
                     is Error -> {
                         logger.error { "c:$temporaryChannelId peer sent error: ascii=${event.message.toAscii()} bin=${event.message.data.toHex()}" }
@@ -1258,7 +1267,8 @@ data class WaitForFundingCreated(
     val initialFeerate: FeeratePerKw,
     val remoteFirstPerCommitmentPoint: PublicKey,
     val channelFlags: Byte,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val channelOrigin: ChannelOrigin?,
     val lastSent: AcceptChannel
 ) : ChannelState() {
@@ -1309,7 +1319,8 @@ data class WaitForFundingCreated(
                                         val commitInput = firstCommitTx.localCommitTx.input
                                         val fundingSigned = FundingSigned(channelId, localSigOfRemoteTx)
                                         val commitments = Commitments(
-                                            channelVersion,
+                                            channelConfig,
+                                            channelFeatures,
                                             localParams,
                                             remoteParams,
                                             channelFlags,
@@ -1327,8 +1338,7 @@ data class WaitForFundingCreated(
                                         )
                                         // NB: we don't send a ChannelSignatureSent for the first commit
                                         logger.info { "c:$channelId waiting for them to publish the funding tx with fundingTxid=${commitInput.outPoint.txid}" }
-                                        // phoenix channels have a zero mindepth for funding tx
-                                        val fundingMinDepth = if (commitments.isZeroReserve) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, fundingAmount)
+                                        val fundingMinDepth = if (commitments.channelFeatures.hasFeature(Feature.ZeroConfChannels)) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, fundingAmount)
                                         logger.info { "c:$channelId will wait for $fundingMinDepth confirmations" }
                                         val watchSpent = WatchSpent(channelId, commitInput.outPoint.txid, commitInput.outPoint.index.toInt(), commitments.commitInput.txOut.publicKeyScript, BITCOIN_FUNDING_SPENT)
                                         val watchConfirmed = WatchConfirmed(channelId, commitInput.outPoint.txid, commitments.commitInput.txOut.publicKeyScript, fundingMinDepth.toLong(), BITCOIN_FUNDING_DEPTHOK)
@@ -1388,45 +1398,49 @@ data class WaitForAcceptChannel(
     override fun processInternal(event: ChannelEvent): Pair<ChannelState, List<ChannelAction>> {
         return when {
             event is ChannelEvent.MessageReceived && event.message is AcceptChannel -> {
-                when (val err = Helpers.validateParamsFunder(staticParams.nodeParams, lastSent, event.message)) {
+                when (val res = Helpers.validateParamsFunder(staticParams.nodeParams, initFunder, lastSent, event.message)) {
+                    is Either.Right -> {
+                        val channelFeatures = res.value
+                        val remoteParams = RemoteParams(
+                            nodeId = staticParams.remoteNodeId,
+                            dustLimit = event.message.dustLimitSatoshis,
+                            maxHtlcValueInFlightMsat = event.message.maxHtlcValueInFlightMsat,
+                            channelReserve = event.message.channelReserveSatoshis, // remote requires local to keep this much satoshis as direct payment
+                            htlcMinimum = event.message.htlcMinimumMsat,
+                            toSelfDelay = event.message.toSelfDelay,
+                            maxAcceptedHtlcs = event.message.maxAcceptedHtlcs,
+                            fundingPubKey = event.message.fundingPubkey,
+                            revocationBasepoint = event.message.revocationBasepoint,
+                            paymentBasepoint = event.message.paymentBasepoint,
+                            delayedPaymentBasepoint = event.message.delayedPaymentBasepoint,
+                            htlcBasepoint = event.message.htlcBasepoint,
+                            features = Features(initFunder.remoteInit.features)
+                        )
+                        val localFundingPubkey = initFunder.localParams.channelKeys.fundingPubKey
+                        val fundingPubkeyScript = ByteVector(Script.write(Script.pay2wsh(Scripts.multiSig2of2(localFundingPubkey, remoteParams.fundingPubKey))))
+                        val makeFundingTx = ChannelAction.Blockchain.MakeFundingTx(fundingPubkeyScript, initFunder.fundingAmount, initFunder.fundingTxFeerate)
+                        val nextState = WaitForFundingInternal(
+                            staticParams,
+                            currentTip,
+                            currentOnChainFeerates,
+                            initFunder.temporaryChannelId,
+                            initFunder.localParams,
+                            remoteParams,
+                            initFunder.fundingAmount,
+                            initFunder.pushAmount,
+                            initFunder.initialFeerate,
+                            event.message.firstPerCommitmentPoint,
+                            initFunder.channelConfig,
+                            channelFeatures,
+                            lastSent
+                        )
+                        Pair(nextState, listOf(makeFundingTx))
+                    }
                     is Either.Left -> {
-                        logger.error(err.value) { "c:$temporaryChannelId invalid ${event.message::class} in state ${this::class}" }
-                        return Pair(Aborted(staticParams, currentTip, currentOnChainFeerates), listOf(ChannelAction.Message.Send(Error(initFunder.temporaryChannelId, err.value.message))))
+                        logger.error(res.value) { "c:$temporaryChannelId invalid ${event.message::class} in state ${this::class}" }
+                        return Pair(Aborted(staticParams, currentTip, currentOnChainFeerates), listOf(ChannelAction.Message.Send(Error(initFunder.temporaryChannelId, res.value.message))))
                     }
                 }
-                val remoteParams = RemoteParams(
-                    nodeId = staticParams.remoteNodeId,
-                    dustLimit = event.message.dustLimitSatoshis,
-                    maxHtlcValueInFlightMsat = event.message.maxHtlcValueInFlightMsat,
-                    channelReserve = event.message.channelReserveSatoshis, // remote requires local to keep this much satoshis as direct payment
-                    htlcMinimum = event.message.htlcMinimumMsat,
-                    toSelfDelay = event.message.toSelfDelay,
-                    maxAcceptedHtlcs = event.message.maxAcceptedHtlcs,
-                    fundingPubKey = event.message.fundingPubkey,
-                    revocationBasepoint = event.message.revocationBasepoint,
-                    paymentBasepoint = event.message.paymentBasepoint,
-                    delayedPaymentBasepoint = event.message.delayedPaymentBasepoint,
-                    htlcBasepoint = event.message.htlcBasepoint,
-                    features = Features(initFunder.remoteInit.features)
-                )
-                val localFundingPubkey = initFunder.localParams.channelKeys.fundingPubKey
-                val fundingPubkeyScript = ByteVector(Script.write(Script.pay2wsh(Scripts.multiSig2of2(localFundingPubkey, remoteParams.fundingPubKey))))
-                val makeFundingTx = ChannelAction.Blockchain.MakeFundingTx(fundingPubkeyScript, initFunder.fundingAmount, initFunder.fundingTxFeerate)
-                val nextState = WaitForFundingInternal(
-                    staticParams,
-                    currentTip,
-                    currentOnChainFeerates,
-                    initFunder.temporaryChannelId,
-                    initFunder.localParams,
-                    remoteParams,
-                    initFunder.fundingAmount,
-                    initFunder.pushAmount,
-                    initFunder.initialFeerate,
-                    event.message.firstPerCommitmentPoint,
-                    initFunder.channelVersion,
-                    lastSent
-                )
-                Pair(nextState, listOf(makeFundingTx))
             }
             event is ChannelEvent.MessageReceived && event.message is Error -> {
                 logger.error { "c:$temporaryChannelId peer sent error: ascii=${event.message.toAscii()} bin=${event.message.data.toHex()}" }
@@ -1458,7 +1472,8 @@ data class WaitForFundingInternal(
     val pushAmount: MilliSatoshi,
     val initialFeerate: FeeratePerKw,
     val remoteFirstPerCommitmentPoint: PublicKey,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val lastSent: OpenChannel
 ) : ChannelState() {
     override fun processInternal(event: ChannelEvent): Pair<ChannelState, List<ChannelAction>> {
@@ -1510,7 +1525,8 @@ data class WaitForFundingInternal(
                             firstCommitTx.localCommitTx,
                             RemoteCommit(0, firstCommitTx.remoteSpec, firstCommitTx.remoteCommitTx.tx.txid, remoteFirstPerCommitmentPoint),
                             lastSent.channelFlags,
-                            channelVersion,
+                            channelConfig,
+                            channelFeatures,
                             fundingCreated
                         )
                         Pair(nextState, listOf(channelIdAssigned, ChannelAction.Message.Send(fundingCreated)))
@@ -1549,7 +1565,8 @@ data class WaitForFundingSigned(
     val localCommitTx: Transactions.TransactionWithInputInfo.CommitTx,
     val remoteCommit: RemoteCommit,
     val channelFlags: Byte,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val lastSent: FundingCreated
 ) : ChannelState() {
     override fun processInternal(event: ChannelEvent): Pair<ChannelState, List<ChannelAction>> {
@@ -1564,7 +1581,7 @@ data class WaitForFundingSigned(
                     is Try.Success -> {
                         val commitInput = localCommitTx.input
                         val commitments = Commitments(
-                            channelVersion, localParams, remoteParams, channelFlags,
+                            channelConfig, channelFeatures, localParams, remoteParams, channelFlags,
                             LocalCommit(0, localSpec, PublishableTxs(signedLocalCommitTx, listOf())), remoteCommit,
                             LocalChanges(listOf(), listOf(), listOf()), RemoteChanges(listOf(), listOf(), listOf()),
                             localNextHtlcId = 0L, remoteNextHtlcId = 0L,
@@ -1580,8 +1597,7 @@ data class WaitForFundingSigned(
                             commitments.commitInput.txOut.publicKeyScript,
                             BITCOIN_FUNDING_SPENT
                         )
-                        // phoenix channels have a zero mindepth for funding tx
-                        val minDepthBlocks = if (commitments.channelVersion.isSet(ChannelVersion.ZERO_RESERVE_BIT)) 0 else staticParams.nodeParams.minDepthBlocks
+                        val minDepthBlocks = if (commitments.channelFeatures.hasFeature(Feature.ZeroConfChannels)) 0 else staticParams.nodeParams.minDepthBlocks
                         val watchConfirmed = WatchConfirmed(
                             this.channelId,
                             commitments.commitInput.outPoint.txid,

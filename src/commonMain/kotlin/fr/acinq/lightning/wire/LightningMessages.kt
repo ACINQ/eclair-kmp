@@ -7,7 +7,7 @@ import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
 import fr.acinq.lightning.*
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
-import fr.acinq.lightning.channel.ChannelVersion
+import fr.acinq.lightning.channel.ChannelType
 import fr.acinq.lightning.router.Announcements
 import fr.acinq.lightning.utils.*
 import fr.acinq.secp256k1.Hex
@@ -306,14 +306,15 @@ data class OpenChannel(
     val channelFlags: Byte,
     val tlvStream: TlvStream<ChannelTlv> = TlvStream.empty()
 ) : ChannelMessage, HasTemporaryChannelId, HasChainHash {
-    val channelVersion: ChannelVersion? get() = tlvStream.get<ChannelTlv.ChannelVersionTlv>()?.channelVersion
+    val channelType: ChannelType? get() = tlvStream.get<ChannelTlv.ChannelTypeTlv>()?.channelType ?: tlvStream.get<ChannelTlv.ChannelVersionTlv>()?.channelType
 
     override val type: Long get() = OpenChannel.type
 
     override fun write(out: Output) {
         @Suppress("UNCHECKED_CAST")
         val readers = mapOf(
-            ChannelTlv.UpfrontShutdownScript.tag to ChannelTlv.UpfrontShutdownScript.Companion as TlvValueReader<ChannelTlv>,
+            ChannelTlv.UpfrontShutdownScriptTlv.tag to ChannelTlv.UpfrontShutdownScriptTlv.Companion as TlvValueReader<ChannelTlv>,
+            ChannelTlv.ChannelTypeTlv.tag to ChannelTlv.ChannelTypeTlv.Companion as TlvValueReader<ChannelTlv>,
             ChannelTlv.ChannelVersionTlv.tag to ChannelTlv.ChannelVersionTlv.Companion as TlvValueReader<ChannelTlv>,
             ChannelTlv.ChannelOriginTlv.tag to ChannelTlv.ChannelOriginTlv.Companion as TlvValueReader<ChannelTlv>
         )
@@ -344,7 +345,8 @@ data class OpenChannel(
         override fun read(input: Input): OpenChannel {
             @Suppress("UNCHECKED_CAST")
             val readers = mapOf(
-                ChannelTlv.UpfrontShutdownScript.tag to ChannelTlv.UpfrontShutdownScript.Companion as TlvValueReader<ChannelTlv>,
+                ChannelTlv.UpfrontShutdownScriptTlv.tag to ChannelTlv.UpfrontShutdownScriptTlv.Companion as TlvValueReader<ChannelTlv>,
+                ChannelTlv.ChannelTypeTlv.tag to ChannelTlv.ChannelTypeTlv.Companion as TlvValueReader<ChannelTlv>,
                 ChannelTlv.ChannelVersionTlv.tag to ChannelTlv.ChannelVersionTlv.Companion as TlvValueReader<ChannelTlv>,
                 ChannelTlv.ChannelOriginTlv.tag to ChannelTlv.ChannelOriginTlv.Companion as TlvValueReader<ChannelTlv>
             )
@@ -392,12 +394,14 @@ data class AcceptChannel(
     @Contextual val firstPerCommitmentPoint: PublicKey,
     val tlvStream: TlvStream<ChannelTlv> = TlvStream.empty()
 ) : ChannelMessage, HasTemporaryChannelId {
+    val channelType: ChannelType? get() = tlvStream.get<ChannelTlv.ChannelTypeTlv>()?.channelType
+
     override val type: Long get() = AcceptChannel.type
 
     override fun write(out: Output) {
         @Suppress("UNCHECKED_CAST")
         val readers = mapOf(
-            ChannelTlv.UpfrontShutdownScript.tag to ChannelTlv.UpfrontShutdownScript.Companion as TlvValueReader<ChannelTlv>,
+            ChannelTlv.UpfrontShutdownScriptTlv.tag to ChannelTlv.UpfrontShutdownScriptTlv.Companion as TlvValueReader<ChannelTlv>,
             ChannelTlv.ChannelVersionTlv.tag to ChannelTlv.ChannelVersionTlv.Companion as TlvValueReader<ChannelTlv>
         )
         LightningCodecs.writeBytes(temporaryChannelId, out)
@@ -423,7 +427,7 @@ data class AcceptChannel(
         override fun read(input: Input): AcceptChannel {
             @Suppress("UNCHECKED_CAST")
             val readers = mapOf(
-                ChannelTlv.UpfrontShutdownScript.tag to ChannelTlv.UpfrontShutdownScript.Companion as TlvValueReader<ChannelTlv>,
+                ChannelTlv.UpfrontShutdownScriptTlv.tag to ChannelTlv.UpfrontShutdownScriptTlv.Companion as TlvValueReader<ChannelTlv>,
                 ChannelTlv.ChannelVersionTlv.tag to ChannelTlv.ChannelVersionTlv.Companion as TlvValueReader<ChannelTlv>
             )
             return AcceptChannel(

@@ -1,4 +1,4 @@
-package fr.acinq.lightning.serialization.v1
+package fr.acinq.lightning.serialization.v3
 
 import fr.acinq.bitcoin.*
 import fr.acinq.lightning.*
@@ -7,17 +7,11 @@ import fr.acinq.lightning.crypto.ShaChain
 import fr.acinq.lightning.transactions.Transactions
 import fr.acinq.lightning.utils.Either
 import fr.acinq.lightning.utils.UUID
+import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.*
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.MapSerializer
-import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.descriptors.SerialDescriptor
-import kotlinx.serialization.descriptors.buildClassSerialDescriptor
-import kotlinx.serialization.descriptors.element
-import kotlinx.serialization.descriptors.mapSerialDescriptor
-import kotlinx.serialization.encoding.CompositeDecoder
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
@@ -66,9 +60,9 @@ data class LocalChanges(val proposed: List<UpdateMessage>, val signed: List<Upda
 
 @Serializable
 data class RemoteChanges(val proposed: List<UpdateMessage>, val acked: List<UpdateMessage>, val signed: List<UpdateMessage>) {
-    constructor(from: fr.acinq.lightning.channel.RemoteChanges) : this(from.proposed, from.signed, from.acked)
+    constructor(from: fr.acinq.lightning.channel.RemoteChanges) : this(from.proposed, from.acked, from.signed)
 
-    fun export() = fr.acinq.lightning.channel.RemoteChanges(proposed, signed, acked)
+    fun export() = fr.acinq.lightning.channel.RemoteChanges(proposed, acked, signed)
 }
 
 @Serializable
@@ -260,29 +254,22 @@ data class RemoteParams(
 }
 
 @Serializable
-data class ChannelVersion(@Serializable(with = ByteVectorKSerializer::class) val bits: ByteVector) {
-    init {
-        require(bits.size() == 4) { "channel version takes 4 bytes" }
-    }
+data class ChannelConfig(@Serializable(with = ByteVectorKSerializer::class) val bin: ByteVector) {
+    constructor(from: fr.acinq.lightning.channel.ChannelConfig) : this(from.toByteArray().toByteVector())
 
-    companion object {
-        // NB: this is the only value that was supported in v1
-        val standard = ChannelVersion(ByteVector("0000000f"))
+    fun export() = fr.acinq.lightning.channel.ChannelConfig(bin.toByteArray())
+}
 
-        // This is the corresponding channel config
-        val channelConfig = fr.acinq.lightning.channel.ChannelConfig.standard
+@Serializable
+data class ChannelType(@Serializable(with = ByteVectorKSerializer::class) val bin: ByteVector) {
+    constructor(from: fr.acinq.lightning.channel.ChannelType.SupportedChannelType) : this(from.toFeatures().toByteArray().toByteVector())
+}
 
-        // These are the corresponding channel features
-        val channelFeatures = fr.acinq.lightning.channel.ChannelFeatures(
-            setOf(
-                Feature.Wumbo,
-                Feature.StaticRemoteKey,
-                Feature.AnchorOutputs,
-                Feature.ZeroReserveChannels,
-                Feature.ZeroConfChannels,
-            )
-        )
-    }
+@Serializable
+data class ChannelFeatures(@Serializable(with = ByteVectorKSerializer::class) val bin: ByteVector) {
+    constructor(from: fr.acinq.lightning.channel.ChannelFeatures) : this(Features(from.activated.associateWith { FeatureSupport.Mandatory }).toByteArray().toByteVector())
+
+    fun export() = fr.acinq.lightning.channel.ChannelFeatures(Features(bin.toByteArray()).activated.keys)
 }
 
 @Serializable
@@ -294,7 +281,8 @@ data class ClosingTxProposed(val unsignedTx: Transactions.TransactionWithInputIn
 
 @Serializable
 data class Commitments(
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val localParams: LocalParams,
     val remoteParams: RemoteParams,
     val channelFlags: Byte,
@@ -312,7 +300,8 @@ data class Commitments(
     val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
 ) {
     constructor(from: fr.acinq.lightning.channel.Commitments) : this(
-        ChannelVersion.standard,
+        ChannelConfig(from.channelConfig),
+        ChannelFeatures(from.channelFeatures),
         LocalParams(from.localParams),
         RemoteParams(from.remoteParams),
         from.channelFlags,
@@ -331,8 +320,8 @@ data class Commitments(
     )
 
     fun export(nodeParams: NodeParams) = fr.acinq.lightning.channel.Commitments(
-        ChannelVersion.channelConfig,
-        ChannelVersion.channelFeatures,
+        channelConfig.export(),
+        channelFeatures.export(),
         localParams.export(nodeParams),
         remoteParams.export(),
         channelFlags,
@@ -502,7 +491,8 @@ data class WaitForFundingCreated(
     val initialFeerate: FeeratePerKw,
     @Serializable(with = PublicKeyKSerializer::class) val remoteFirstPerCommitmentPoint: PublicKey,
     val channelFlags: Byte,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val lastSent: AcceptChannel
 ) : ChannelState() {
     constructor(from: fr.acinq.lightning.channel.WaitForFundingCreated) : this(
@@ -517,7 +507,8 @@ data class WaitForFundingCreated(
         from.initialFeerate,
         from.remoteFirstPerCommitmentPoint,
         from.channelFlags,
-        ChannelVersion.standard,
+        ChannelConfig(from.channelConfig),
+        ChannelFeatures(from.channelFeatures),
         from.lastSent
     )
 }
@@ -532,7 +523,8 @@ data class InitFunder(
     val localParams: LocalParams,
     val remoteInit: Init,
     val channelFlags: Byte,
-    val channelVersion: ChannelVersion
+    val channelConfig: ChannelConfig,
+    val channelType: ChannelType
 ) {
     constructor(from: fr.acinq.lightning.channel.ChannelEvent.InitFunder) : this(
         from.temporaryChannelId,
@@ -543,7 +535,8 @@ data class InitFunder(
         LocalParams(from.localParams),
         from.remoteInit,
         from.channelFlags,
-        ChannelVersion.standard,
+        ChannelConfig(from.channelConfig),
+        ChannelType(from.channelType)
     )
 }
 
@@ -576,7 +569,8 @@ data class WaitForFundingInternal(
     val pushAmount: MilliSatoshi,
     val initialFeerate: FeeratePerKw,
     @Serializable(with = PublicKeyKSerializer::class) val remoteFirstPerCommitmentPoint: PublicKey,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val lastSent: OpenChannel
 ) : ChannelState() {
     constructor(from: fr.acinq.lightning.channel.WaitForFundingInternal) : this(
@@ -590,7 +584,8 @@ data class WaitForFundingInternal(
         from.pushAmount,
         from.initialFeerate,
         from.remoteFirstPerCommitmentPoint,
-        ChannelVersion.standard,
+        ChannelConfig(from.channelConfig),
+        ChannelFeatures(from.channelFeatures),
         from.lastSent
     )
 }
@@ -609,7 +604,8 @@ data class WaitForFundingSigned(
     val localCommitTx: Transactions.TransactionWithInputInfo.CommitTx,
     val remoteCommit: RemoteCommit,
     val channelFlags: Byte,
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val lastSent: FundingCreated
 ) : ChannelState() {
     constructor(from: fr.acinq.lightning.channel.WaitForFundingSigned) : this(
@@ -625,7 +621,8 @@ data class WaitForFundingSigned(
         from.localCommitTx,
         RemoteCommit(from.remoteCommit),
         from.channelFlags,
-        ChannelVersion.standard,
+        ChannelConfig(from.channelConfig),
+        ChannelFeatures(from.channelFeatures),
         from.lastSent
     )
 }
@@ -886,71 +883,41 @@ data class ErrorInformationLeak(
 }
 
 object ShaChainSerializer : KSerializer<ShaChain> {
-    @OptIn(ExperimentalSerializationApi::class)
-    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("ShaChain") {
-        element("knownHashes", mapSerialDescriptor(String.serializer().descriptor, ByteVector32KSerializer.descriptor))
-        element<Long>("lastIndex", isOptional = true)
+    @Serializable
+    private data class Surrogate(val knownHashes: List<Pair<String, ByteArray>>, val lastIndex: Long? = null)
+
+    override val descriptor: SerialDescriptor = Surrogate.serializer().descriptor
+
+    override fun serialize(encoder: Encoder, value: ShaChain) {
+        val surrogate = Surrogate(
+            value.knownHashes.map { Pair(it.key.toBinaryString(), it.value.toByteArray()) },
+            value.lastIndex
+        )
+        return encoder.encodeSerializableValue(Surrogate.serializer(), surrogate)
+    }
+
+    override fun deserialize(decoder: Decoder): ShaChain {
+        val surrogate = decoder.decodeSerializableValue(Surrogate.serializer())
+        return ShaChain(surrogate.knownHashes.associate { it.first.toBooleanList() to ByteVector32(it.second) }, surrogate.lastIndex)
     }
 
     private fun List<Boolean>.toBinaryString(): String = this.map { if (it) '1' else '0' }.joinToString(separator = "")
     private fun String.toBooleanList(): List<Boolean> = this.map { it == '1' }
-
-    private val mapSerializer = MapSerializer(String.serializer(), ByteVector32KSerializer)
-
-    override fun serialize(encoder: Encoder, value: ShaChain) {
-        val compositeEncoder = encoder.beginStructure(descriptor)
-        compositeEncoder.encodeSerializableElement(descriptor, 0, mapSerializer, value.knownHashes.mapKeys { it.key.toBinaryString() })
-        if (value.lastIndex != null) compositeEncoder.encodeLongElement(descriptor, 1, value.lastIndex)
-        compositeEncoder.endStructure(descriptor)
-    }
-
-    override fun deserialize(decoder: Decoder): ShaChain {
-        var knownHashes: Map<List<Boolean>, ByteVector32>? = null
-        var lastIndex: Long? = null
-
-        val compositeDecoder = decoder.beginStructure(descriptor)
-        loop@ while (true) {
-            when (compositeDecoder.decodeElementIndex(descriptor)) {
-                CompositeDecoder.DECODE_DONE -> break@loop
-                0 -> knownHashes = compositeDecoder.decodeSerializableElement(descriptor, 0, mapSerializer).mapKeys { it.key.toBooleanList() }
-                1 -> lastIndex = compositeDecoder.decodeLongElement(descriptor, 1)
-            }
-        }
-        compositeDecoder.endStructure(descriptor)
-
-        return ShaChain(
-            knownHashes ?: error("No knownHashes in structure"),
-            lastIndex
-        )
-    }
 }
 
-class EitherSerializer<A : Any, B : Any>(val aSer: KSerializer<A>, val bSer: KSerializer<B>) :
-    KSerializer<Either<A, B>> {
+class EitherSerializer<A : Any, B : Any>(val aSer: KSerializer<A>, val bSer: KSerializer<B>) : KSerializer<Either<A, B>> {
+    @Serializable
+    data class Surrogate<A : Any, B : Any>(val isRight: Boolean, val left: A?, val right: B?)
 
-    override val descriptor = buildClassSerialDescriptor("Either", aSer.descriptor, bSer.descriptor) {
-        element("left", aSer.descriptor, isOptional = true)
-        element("right", bSer.descriptor, isOptional = true)
-    }
+    override val descriptor = Surrogate.serializer<A, B>(aSer, bSer).descriptor
 
     override fun serialize(encoder: Encoder, value: Either<A, B>) {
-        val compositeEncoder = encoder.beginStructure(descriptor)
-        when (value) {
-            is Either.Left -> compositeEncoder.encodeSerializableElement(descriptor, 0, aSer, value.value)
-            is Either.Right -> compositeEncoder.encodeSerializableElement(descriptor, 1, bSer, value.value)
-        }
-        compositeEncoder.endStructure(descriptor)
+        val surrogate = Surrogate(value.isRight, value.left, value.right)
+        return encoder.encodeSerializableValue(Surrogate.serializer<A, B>(aSer, bSer), surrogate)
     }
 
     override fun deserialize(decoder: Decoder): Either<A, B> {
-        lateinit var either: Either<A, B>
-
-        val compositeDecoder = decoder.beginStructure(descriptor)
-        when (val i = compositeDecoder.decodeElementIndex(descriptor)) {
-            0 -> either = Either.Left(compositeDecoder.decodeSerializableElement(descriptor, i, aSer))
-            1 -> either = Either.Right(compositeDecoder.decodeSerializableElement(descriptor, i, bSer))
-        }
-        compositeDecoder.endStructure(descriptor)
-        return either
+        val surrogate = decoder.decodeSerializableValue(Surrogate.serializer<A, B>(aSer, bSer))
+        return if (surrogate.isRight) Either.Right(surrogate.right!!) else Either.Left(surrogate.left!!)
     }
 }

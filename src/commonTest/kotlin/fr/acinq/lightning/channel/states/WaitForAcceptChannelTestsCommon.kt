@@ -4,12 +4,17 @@ import fr.acinq.bitcoin.Block
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Satoshi
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.Feature
+import fr.acinq.lightning.FeatureSupport
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.utils.sat
 import fr.acinq.lightning.wire.AcceptChannel
+import fr.acinq.lightning.wire.ChannelTlv
 import fr.acinq.lightning.wire.Error
+import fr.acinq.lightning.wire.TlvStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -25,6 +30,52 @@ class WaitForAcceptChannelTestsCommon : LightningTestSuite() {
         val funding = actions1.find<ChannelAction.Blockchain.MakeFundingTx>()
         assertEquals(TestConstants.fundingAmount, funding.amount)
         assertEquals(TestConstants.feeratePerKw, funding.feerate)
+        assertEquals(alice1.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo)))
+    }
+
+    @Test
+    fun `recv AcceptChannel (zero conf)`() {
+        val (alice, _, accept) = init(
+            aliceFeatures = TestConstants.Alice.nodeParams.features.add(Feature.ZeroConfChannels to FeatureSupport.Optional),
+            bobFeatures = TestConstants.Bob.nodeParams.features.add(Feature.ZeroConfChannels to FeatureSupport.Optional),
+        )
+        assertEquals(0, accept.minimumDepth)
+        val (alice1, actions1) = alice.process(ChannelEvent.MessageReceived(accept))
+        assertTrue(alice1 is WaitForFundingInternal)
+        assertEquals(1, actions1.size)
+        actions1.find<ChannelAction.Blockchain.MakeFundingTx>()
+        assertEquals(alice1.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo, Feature.ZeroConfChannels)))
+    }
+
+    @Test
+    fun `recv AcceptChannel (zero reserve)`() {
+        val (alice, _, accept) = init(
+            bobFeatures = TestConstants.Bob.nodeParams.features.add(Feature.ZeroReserveChannels to FeatureSupport.Optional),
+        )
+        assertTrue(accept.minimumDepth > 0)
+        val (alice1, actions1) = alice.process(ChannelEvent.MessageReceived(accept))
+        assertTrue(alice1 is WaitForFundingInternal)
+        assertEquals(1, actions1.size)
+        actions1.find<ChannelAction.Blockchain.MakeFundingTx>()
+        assertEquals(alice1.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo, Feature.ZeroReserveChannels)))
+    }
+
+    @Test
+    fun `recv AcceptChannel (missing channel type)`() {
+        val (alice, _, accept) = init()
+        val (alice1, actions1) = alice.process(ChannelEvent.MessageReceived(accept.copy(tlvStream = TlvStream(listOf()))))
+        assertTrue(alice1 is Aborted)
+        val error = actions1.hasOutgoingMessage<Error>()
+        assertEquals(error, Error(accept.temporaryChannelId, MissingChannelType(accept.temporaryChannelId, ChannelType.SupportedChannelType.AnchorOutputs).message))
+    }
+
+    @Test
+    fun `recv AcceptChannel (invalid channel type)`() {
+        val (alice, _, accept) = init()
+        val (alice1, actions1) = alice.process(ChannelEvent.MessageReceived(accept.copy(tlvStream = TlvStream(listOf(ChannelTlv.ChannelTypeTlv(ChannelType.SupportedChannelType.Standard))))))
+        assertTrue(alice1 is Aborted)
+        val error = actions1.hasOutgoingMessage<Error>()
+        assertEquals(error, Error(accept.temporaryChannelId, InvalidChannelType(accept.temporaryChannelId, ChannelType.SupportedChannelType.AnchorOutputs, ChannelType.SupportedChannelType.Standard).message))
     }
 
     @Test
@@ -134,15 +185,23 @@ class WaitForAcceptChannelTestsCommon : LightningTestSuite() {
 
     companion object {
         fun init(
-            channelVersion: ChannelVersion = ChannelVersion.STANDARD,
+            channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             currentHeight: Int = TestConstants.defaultBlockHeight,
-            fundingAmount: Satoshi = TestConstants.fundingAmount
+            fundingAmount: Satoshi = TestConstants.fundingAmount,
+            aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+            bobFeatures: Features = TestConstants.Bob.nodeParams.features,
         ): Triple<WaitForAcceptChannel, WaitForFundingCreated, AcceptChannel> {
-            val (alice, bob, open) = TestsHelper.init(channelVersion, currentHeight, fundingAmount)
+            val (alice, bob, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, currentHeight, fundingAmount)
+            assertEquals(open.tlvStream.get(), ChannelTlv.ChannelTypeTlv(ChannelType.SupportedChannelType.AnchorOutputs))
             val (bob1, actions) = bob.process(ChannelEvent.MessageReceived(open))
             assertTrue(bob1 is WaitForFundingCreated)
             val accept = actions.hasOutgoingMessage<AcceptChannel>()
-            assertEquals(3, accept.minimumDepth)
+            assertEquals(accept.tlvStream.get(), ChannelTlv.ChannelTypeTlv(ChannelType.SupportedChannelType.AnchorOutputs))
+            if (bob1.channelFeatures.hasFeature(Feature.ZeroConfChannels)) {
+                assertEquals(0, accept.minimumDepth)
+            } else {
+                assertEquals(3, accept.minimumDepth)
+            }
             return Triple(alice, bob1, accept)
         }
     }

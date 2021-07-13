@@ -28,12 +28,6 @@ import kotlin.test.*
 class ChannelDataTestsCommon : LightningTestSuite() {
 
     @Test
-    fun `standard channel features include deterministic channel key path`() {
-        assertTrue(ChannelVersion.STANDARD.isSet(ChannelVersion.USE_PUBKEY_KEYPATH_BIT))
-        assertTrue(!ChannelVersion.ZEROES.isSet(ChannelVersion.USE_PUBKEY_KEYPATH_BIT))
-    }
-
-    @Test
     fun `local commit published`() {
         val (lcp, _, _) = createClosingTransactions()
         assertFalse(lcp.isConfirmed())

@@ -1,21 +1,15 @@
 package fr.acinq.lightning.channel
 
 import fr.acinq.bitcoin.*
-import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
-import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.Helpers.publishIfNeeded
 import fr.acinq.lightning.channel.Helpers.watchConfirmedIfNeeded
 import fr.acinq.lightning.channel.Helpers.watchSpentIfNeeded
 import fr.acinq.lightning.transactions.Scripts
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.*
-import fr.acinq.lightning.utils.BitField
-import fr.acinq.lightning.utils.UUID
 import fr.acinq.lightning.wire.ClosingSigned
-import fr.acinq.lightning.wire.FailureMessage
-import fr.acinq.lightning.wire.OnionRoutingPacket
 import kotlinx.serialization.Serializable
 
 /**
@@ -385,7 +379,7 @@ data class ChannelKeys(
 }
 
 @OptIn(ExperimentalUnsignedTypes::class)
-data class LocalParams constructor(
+data class LocalParams(
     val nodeId: PublicKey,
     val channelKeys: ChannelKeys,
     val dustLimit: Satoshi,
@@ -415,40 +409,6 @@ data class RemoteParams(
     val htlcBasepoint: PublicKey,
     val features: Features
 )
-
-@Serializable
-data class ChannelVersion(val bits: BitField) {
-    init {
-        require(bits.byteSize == SIZE_BYTE) { "channel version takes 4 bytes" }
-    }
-
-    infix fun or(other: ChannelVersion) = ChannelVersion(bits or other.bits)
-    infix fun and(other: ChannelVersion) = ChannelVersion(bits and other.bits)
-    infix fun xor(other: ChannelVersion) = ChannelVersion(bits xor other.bits)
-
-    fun isSet(bit: Int) = bits.getRight(bit)
-
-    val hasStaticRemotekey: Boolean by lazy { isSet(USE_STATIC_REMOTEKEY_BIT) }
-    val hasAnchorOutputs: Boolean by lazy { isSet(USE_ANCHOR_OUTPUTS_BIT) }
-
-    companion object {
-        const val SIZE_BYTE = 4
-        val ZEROES = ChannelVersion(BitField(SIZE_BYTE))
-        const val USE_PUBKEY_KEYPATH_BIT = 0 // bit numbers start at 0
-        const val USE_STATIC_REMOTEKEY_BIT = 1
-        const val USE_ANCHOR_OUTPUTS_BIT = 2
-        const val ZERO_RESERVE_BIT = 3
-
-        private fun fromBit(bit: Int) = ChannelVersion(BitField(SIZE_BYTE).apply { setRight(bit) })
-
-        private val USE_PUBKEY_KEYPATH = fromBit(USE_PUBKEY_KEYPATH_BIT)
-        private val USE_STATIC_REMOTEKEY = fromBit(USE_STATIC_REMOTEKEY_BIT)
-        private val USE_ANCHOR_OUTPUTS = fromBit(USE_ANCHOR_OUTPUTS_BIT)
-        val ZERO_RESERVE = fromBit(ZERO_RESERVE_BIT)
-
-        val STANDARD = ZEROES or USE_PUBKEY_KEYPATH or USE_STATIC_REMOTEKEY or USE_ANCHOR_OUTPUTS
-    }
-}
 
 object ChannelFlags {
     const val AnnounceChannel = 0x01.toByte()

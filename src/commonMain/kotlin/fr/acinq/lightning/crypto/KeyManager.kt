@@ -4,10 +4,7 @@ import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.Crypto.sha256
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
 import fr.acinq.bitcoin.crypto.Pack
-import fr.acinq.lightning.channel.ChannelKeys
-import fr.acinq.lightning.channel.ChannelVersion
-import fr.acinq.lightning.channel.LocalParams
-import fr.acinq.lightning.channel.RecoveredChannelKeys
+import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo
 
 interface KeyManager {
@@ -35,16 +32,14 @@ interface KeyManager {
 
     fun commitmentPoint(shaSeed: ByteVector32, index: Long): PublicKey
 
-    fun channelKeyPath(fundingKeyPath: KeyPath, channelVersion: ChannelVersion): KeyPath =
-        if (channelVersion.isSet(ChannelVersion.USE_PUBKEY_KEYPATH_BIT)) {
-            // deterministic mode: use the funding pubkey to compute the channel key path
-            channelKeyPath(fundingPublicKey(fundingKeyPath))
-        } else {
-            // legacy mode:  we reuse the funding key path as our channel key path
-            fundingKeyPath
-        }
+    fun channelKeyPath(fundingKeyPath: KeyPath, channelConfig: ChannelConfig): KeyPath = when {
+        // deterministic mode: use the funding pubkey to compute the channel key path
+        channelConfig.hasOption(ChannelConfigOption.FundingPubKeyBasedChannelKeyPath) -> channelKeyPath(fundingPublicKey(fundingKeyPath))
+        // legacy mode:  we reuse the funding key path as our channel key path
+        else -> fundingKeyPath
+    }
 
-    fun channelKeyPath(localParams: LocalParams, channelVersion: ChannelVersion): KeyPath = channelKeyPath(localParams.channelKeys.fundingKeyPath, channelVersion)
+    fun channelKeyPath(localParams: LocalParams, channelConfig: ChannelConfig): KeyPath = channelKeyPath(localParams.channelKeys.fundingKeyPath, channelConfig)
 
     /**
      *

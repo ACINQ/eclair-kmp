@@ -5,8 +5,9 @@ import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Satoshi
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.channel.ChannelOrigin
-import fr.acinq.lightning.channel.ChannelVersion
+import fr.acinq.lightning.channel.ChannelType
 import fr.acinq.lightning.utils.BitField
 import fr.acinq.lightning.utils.toByteVector
 import kotlinx.serialization.Contextual
@@ -17,32 +18,72 @@ import kotlinx.serialization.Serializable
 sealed class ChannelTlv : Tlv {
     /** Commitment to where the funds will go in case of a mutual close, which remote node will enforce in case we're compromised. */
     @Serializable
-    data class UpfrontShutdownScript(@Contextual val scriptPubkey: ByteVector) : ChannelTlv() {
+    data class UpfrontShutdownScriptTlv(@Contextual val scriptPubkey: ByteVector) : ChannelTlv() {
         val isEmpty: Boolean get() = scriptPubkey.isEmpty()
 
-        override val tag: Long get() = UpfrontShutdownScript.tag
+        override val tag: Long get() = UpfrontShutdownScriptTlv.tag
 
         override fun write(out: Output) {
             LightningCodecs.writeBytes(scriptPubkey, out)
         }
 
-        companion object : TlvValueReader<UpfrontShutdownScript> {
+        companion object : TlvValueReader<UpfrontShutdownScriptTlv> {
             const val tag: Long = 0
 
-            override fun read(input: Input): UpfrontShutdownScript {
+            override fun read(input: Input): UpfrontShutdownScriptTlv {
                 val len = input.availableBytes
                 val script = LightningCodecs.bytes(input, len)
-                return UpfrontShutdownScript(ByteVector(script))
+                return UpfrontShutdownScriptTlv(ByteVector(script))
             }
         }
     }
 
     @Serializable
-    data class ChannelVersionTlv(val channelVersion: ChannelVersion) : ChannelTlv() {
+    data class ChannelTypeTlv(val channelType: ChannelType) : ChannelTlv() {
+        override val tag: Long get() = ChannelTypeTlv.tag
+
+        override fun write(out: Output) {
+            val features = when (channelType) {
+                is ChannelType.SupportedChannelType -> channelType.toFeatures()
+                is ChannelType.UnsupportedChannelType -> channelType.featureBits
+            }
+            LightningCodecs.writeBytes(features.toByteArray(), out)
+        }
+
+        companion object : TlvValueReader<ChannelTypeTlv> {
+            const val tag: Long = 1
+
+            override fun read(input: Input): ChannelTypeTlv {
+                val len = input.availableBytes
+                val features = LightningCodecs.bytes(input, len)
+                return ChannelTypeTlv(ChannelType.fromFeatures(Features(features)))
+            }
+        }
+    }
+
+    /** This legacy TLV was used before ChannelType was introduced: it should be removed whenever possible. */
+    @Serializable
+    data class ChannelVersionTlv(val channelType: ChannelType) : ChannelTlv() {
         override val tag: Long get() = ChannelVersionTlv.tag
 
         override fun write(out: Output) {
-            LightningCodecs.writeBytes(channelVersion.bits.bytes, out)
+            val bits = BitField(4)
+            when (channelType) {
+                ChannelType.SupportedChannelType.AnchorOutputs -> {
+                    bits.setRight(1)
+                    bits.setRight(2)
+                    bits.setRight(3)
+                }
+                ChannelType.SupportedChannelType.StaticRemoteKey -> {
+                    bits.setRight(1)
+                    bits.setRight(3)
+                }
+                ChannelType.SupportedChannelType.Standard -> {
+                    bits.setRight(3)
+                }
+                is ChannelType.UnsupportedChannelType -> throw IllegalArgumentException("unsupported channel type: ${channelType.name}")
+            }
+            LightningCodecs.writeBytes(bits.bytes, out)
         }
 
         companion object : TlvValueReader<ChannelVersionTlv> {
@@ -50,8 +91,13 @@ sealed class ChannelTlv : Tlv {
 
             override fun read(input: Input): ChannelVersionTlv {
                 val len = input.availableBytes
-                val buffer = LightningCodecs.bytes(input, len)
-                return ChannelVersionTlv(ChannelVersion(BitField.from(buffer)))
+                val bits = BitField.from(LightningCodecs.bytes(input, len))
+                val channelType = when {
+                    bits.getRight(2) -> ChannelType.SupportedChannelType.AnchorOutputs
+                    bits.getRight(1) -> ChannelType.SupportedChannelType.StaticRemoteKey
+                    else -> ChannelType.SupportedChannelType.Standard
+                }
+                return ChannelVersionTlv(channelType)
             }
         }
     }

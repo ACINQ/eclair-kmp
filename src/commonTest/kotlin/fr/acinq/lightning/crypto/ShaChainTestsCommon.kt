@@ -9,7 +9,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 
-class SchaChainTestsCommon : LightningTestSuite() {
+class ShaChainTestsCommon : LightningTestSuite() {
     private val expected = listOf(
         Hex.decode("f85a0f7f237ed2139855703db4264de380ec731f64a3d832c22a5f2ef615f1d5"),
         Hex.decode("a07acb1203f8d7a761eb43e109e46fd877031a6fd2a8e6840f064a49ba826aec"),

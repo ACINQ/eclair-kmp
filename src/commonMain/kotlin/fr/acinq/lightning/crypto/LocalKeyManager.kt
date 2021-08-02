@@ -3,9 +3,9 @@ package fr.acinq.lightning.crypto
 import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.DeterministicWallet.derivePrivateKey
 import fr.acinq.bitcoin.DeterministicWallet.hardened
-import fr.acinq.lightning.Lightning.secureRandom
 import fr.acinq.lightning.channel.ChannelKeys
 import fr.acinq.lightning.channel.RecoveredChannelKeys
+import fr.acinq.lightning.Lightning.randomLong
 import fr.acinq.lightning.transactions.Transactions
 
 data class LocalKeyManager(val seed: ByteVector, val chainHash: ByteVector32) : KeyManager {
@@ -58,7 +58,7 @@ data class LocalKeyManager(val seed: ByteVector, val chainHash: ByteVector32) : 
 
     override fun newFundingKeyPath(isFunder: Boolean): KeyPath {
         val last = hardened(if (isFunder) 1 else 0)
-        fun next() = secureRandom.nextInt().toLong() and 0xFFFFFFFF
+        fun next() = randomLong() and 0xFFFFFFFF
         return KeyPath(listOf(next(), next(), next(), next(), next(), next(), next(), next(), last))
     }
 

@@ -1,6 +1,6 @@
 package fr.acinq.lightning.crypto.noise
 
-import kotlin.random.Random
+import fr.acinq.lightning.Lightning.randomBytes
 
 interface DHFunctions {
     fun name(): String
@@ -296,7 +296,7 @@ interface ByteStream {
 }
 
 object RandomBytes : ByteStream {
-    override fun nextBytes(length: Int) = Random.nextBytes(length)
+    override fun nextBytes(length: Int) = randomBytes(length)
 }
 
 

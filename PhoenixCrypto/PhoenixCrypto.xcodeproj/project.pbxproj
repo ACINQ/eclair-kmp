@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		DC35ED842630A381002E441D /* NativeWeakRandom.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC35ED832630A381002E441D /* NativeWeakRandom.swift */; };
 		DC9B8EC625D6D41400E13818 /* PhoenixCrypto.m in Sources */ = {isa = PBXBuildFile; fileRef = DC9B8EC525D6D41400E13818 /* PhoenixCrypto.m */; };
 		DC9B8EC725D6D41400E13818 /* PhoenixCrypto.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = DC9B8EC425D6D41400E13818 /* PhoenixCrypto.h */; };
 		DC9B8ED425D6D7A100E13818 /* NativeChaChaPoly.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC9B8ED325D6D7A100E13818 /* NativeChaChaPoly.swift */; };
@@ -26,6 +27,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		DC35ED832630A381002E441D /* NativeWeakRandom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWeakRandom.swift; sourceTree = "<group>"; };
 		DC9B8EC125D6D41400E13818 /* libPhoenixCrypto.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libPhoenixCrypto.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		DC9B8EC425D6D41400E13818 /* PhoenixCrypto.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PhoenixCrypto.h; sourceTree = "<group>"; };
 		DC9B8EC525D6D41400E13818 /* PhoenixCrypto.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PhoenixCrypto.m; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 				DC9B8EC425D6D41400E13818 /* PhoenixCrypto.h */,
 				DC9B8EC525D6D41400E13818 /* PhoenixCrypto.m */,
 				DC9B8ED325D6D7A100E13818 /* NativeChaChaPoly.swift */,
+				DC35ED832630A381002E441D /* NativeWeakRandom.swift */,
 				DC9B8ED225D6D7A000E13818 /* PhoenixCrypto-Bridging-Header.h */,
 			);
 			path = Classes;
@@ -159,6 +162,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DC9B8ED425D6D7A100E13818 /* NativeChaChaPoly.swift in Sources */,
+				DC35ED842630A381002E441D /* NativeWeakRandom.swift in Sources */,
 				DC9B8EC625D6D41400E13818 /* PhoenixCrypto.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

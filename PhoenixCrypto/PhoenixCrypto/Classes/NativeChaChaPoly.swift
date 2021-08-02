@@ -2,20 +2,16 @@ import Foundation
 import CryptoKit
 import os.log
 
-//#if DEBUG && true
 fileprivate var log = Logger(
 	subsystem: Bundle.main.bundleIdentifier!,
 	category: "NativeChaChaPoly"
 )
-//#else
-//fileprivate var log = Logger(OSLog.disabled)
-//#endif
 
 @objc
 public class NativeChaChaPoly: NSObject {
 	
 	@objc
-	public class func chachapoly_encrypt(
+	public class func encrypt(
 		key: Data,
 		nonce: Data,
 		authenticatedData: Data,
@@ -50,7 +46,7 @@ public class NativeChaChaPoly: NSObject {
 	}
 
 	@objc
-	public class func chachapoly_decrypt(
+	public class func decrypt(
 		key: Data,
 		nonce: Data,
 		authenticatedData: Data,

@@ -216,16 +216,16 @@ object Serialization {
         override val serializersModule: SerializersModule = serializationModules
         override fun decodeBoolean(): Boolean = input.read() != 0
         override fun decodeByte(): Byte = input.read().toByte()
-        override fun decodeShort(): Short = Pack.int16BE(input.readNBytes(2))
-        override fun decodeInt(): Int = Pack.int32BE(input.readNBytes(4))
-        override fun decodeLong(): Long = Pack.int64BE(input.readNBytes(8))
+        override fun decodeShort(): Short = Pack.int16BE(input.readNBytes(2)!!)
+        override fun decodeInt(): Int = Pack.int32BE(input.readNBytes(4)!!)
+        override fun decodeLong(): Long = Pack.int64BE(input.readNBytes(8)!!)
         override fun decodeFloat(): Float = TODO()
         override fun decodeDouble(): Double = TODO()
         override fun decodeChar(): Char = input.read().toChar()
         override fun decodeString(): String {
             val len = decodeInt()
             require(len <= input.availableBytes)
-            val decoded = input.readNBytes(len).decodeToString()
+            val decoded = input.readNBytes(len)!!.decodeToString()
             return decoded
         }
 

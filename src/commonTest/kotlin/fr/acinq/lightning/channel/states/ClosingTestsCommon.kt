@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.Bitcoin.computeBIP84Address
 import fr.acinq.bitcoin.Bitcoin.computeP2PkhAddress
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.Lightning
 import fr.acinq.lightning.blockchain.*
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
@@ -32,6 +33,7 @@ import fr.acinq.lightning.wire.*
 import kotlin.test.*
 
 class ClosingTestsCommon : LightningTestSuite() {
+
     @Test
     fun `start fee negotiation from configured block target`() {
         val (alice, bob) = reachNormal()
@@ -1061,7 +1063,7 @@ class ClosingTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv BITCOIN_TX_CONFIRMED (future remote commit)`() {
-        val (alice0, bob0) = reachNormal()
+        val (alice0, bob0) = reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
         val (_, bobDisconnected) = run {
             // This HTLC will be fulfilled.
             val (nodes1, preimage, htlc) = addHtlc(25_000_000.msat, alice0, bob0)
@@ -1082,8 +1084,8 @@ class ClosingTestsCommon : LightningTestSuite() {
             Pair(alice7, bob7)
         }
 
-        val localInit = Init(ByteVector(TestConstants.Alice.nodeParams.features.toByteArray()))
-        val remoteInit = Init(ByteVector(TestConstants.Bob.nodeParams.features.toByteArray()))
+        val localInit = Init(ByteVector(alice0.commitments.localParams.features.toByteArray()))
+        val remoteInit = Init(ByteVector(bob0.commitments.localParams.features.toByteArray()))
 
         // then we manually replace alice's state with an older one and reconnect them.
         val (alice1, aliceActions1) = Offline(alice0).processEx(ChannelEvent.Connected(localInit, remoteInit))
@@ -1572,7 +1574,7 @@ class ClosingTestsCommon : LightningTestSuite() {
     fun `recv ChannelReestablish`() {
         val (alice0, bob0, _) = initMutualClose()
         val bobCurrentPerCommitmentPoint = bob0.keyManager.commitmentPoint(
-            bob0.keyManager.channelKeyPath(bob0.commitments.localParams, bob0.commitments.channelVersion),
+            bob0.keyManager.channelKeyPath(bob0.commitments.localParams, bob0.commitments.channelConfig),
             bob0.commitments.localCommit.index
         )
         val channelReestablish = ChannelReestablish(bob0.channelId, 42, 42, PrivateKey(ByteVector32.Zeroes), bobCurrentPerCommitmentPoint)
@@ -1880,7 +1882,7 @@ class ClosingTestsCommon : LightningTestSuite() {
         }
 
         fun initForceClose(): Pair<Closing, Closing> {
-            val (alice, bob) = WaitForFundingConfirmedTestsCommon.init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
+            val (alice, bob) = WaitForFundingConfirmedTestsCommon.init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat)
             // funder
             val alice1 = run {
                 val (alice1, actions1) = alice.process(ChannelEvent.ExecuteCommand(CMD_FORCECLOSE))
@@ -1891,11 +1893,11 @@ class ClosingTestsCommon : LightningTestSuite() {
                 if (channelBalance > 0.msat) {
                     val onChainPayment = actions1.filterIsInstance<ChannelAction.Storage.StoreChannelClosing>().firstOrNull()
                     assertNotNull(onChainPayment)
-                    assertTrue(onChainPayment.amount == channelBalance)
+                    assertEquals(onChainPayment.amount, channelBalance)
                     assertTrue(onChainPayment.isSentToDefaultAddress)
                     val (closingPubKey, _) = alice1.keyManager.closingPubkeyScript(PublicKey.Generator) // param ignored
                     val closingAddress2 = computeBIP84Address(closingPubKey, alice1.staticParams.nodeParams.chainHash)
-                    assertTrue(onChainPayment.closingAddress == closingAddress2)
+                    assertEquals(onChainPayment.closingAddress, closingAddress2)
                 }
 
                 val error = actions1.hasOutgoingMessage<Error>()
@@ -1928,11 +1930,11 @@ class ClosingTestsCommon : LightningTestSuite() {
                 if (channelBalance > 0.msat) {
                     val onChainPayment = actions1.filterIsInstance<ChannelAction.Storage.StoreChannelClosing>().firstOrNull()
                     assertNotNull(onChainPayment)
-                    assertTrue(onChainPayment.amount == channelBalance)
+                    assertEquals(onChainPayment.amount, channelBalance)
                     assertTrue(onChainPayment.isSentToDefaultAddress)
                     val (closingPubKey, _) = bob1.keyManager.closingPubkeyScript(PublicKey.Generator) // param ignored
                     val closingAddress = computeBIP84Address(closingPubKey, bob1.staticParams.nodeParams.chainHash)
-                    assertTrue(onChainPayment.closingAddress == closingAddress)
+                    assertEquals(onChainPayment.closingAddress, closingAddress)
                 }
 
                 val error = actions1.hasOutgoingMessage<Error>()
@@ -1958,4 +1960,5 @@ class ClosingTestsCommon : LightningTestSuite() {
             return alice1 to bob1
         }
     }
+
 }

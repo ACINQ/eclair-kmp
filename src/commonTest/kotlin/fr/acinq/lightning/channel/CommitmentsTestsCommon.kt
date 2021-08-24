@@ -3,9 +3,9 @@ package fr.acinq.lightning.channel
 import fr.acinq.bitcoin.*
 import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
-import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
 import fr.acinq.lightning.blockchain.WatchEventSpent
@@ -472,7 +472,7 @@ class CommitmentsTestsCommon : LightningTestSuite() {
     @OptIn(ExperimentalUnsignedTypes::class)
     companion object {
         fun makeCommitments(toLocal: MilliSatoshi, toRemote: MilliSatoshi, feeRatePerKw: FeeratePerKw = FeeratePerKw(0.sat), dustLimit: Satoshi = 0.sat, isFunder: Boolean = true, announceChannel: Boolean = true): Commitments {
-            val channelKeys = ChannelKeys(KeyPath("42"), randomKey(), randomKey(), randomKey(), randomKey() , randomKey(), randomBytes32())
+            val channelKeys = ChannelKeys(KeyPath("42"), randomKey(), randomKey(), randomKey(), randomKey(), randomKey(), randomBytes32())
             val localParams = LocalParams(
                 randomKey().publicKey(), channelKeys, dustLimit, Long.MAX_VALUE, 0.sat, 1.msat, CltvExpiryDelta(144), 50, isFunder, ByteVector.empty, Features.empty
             )
@@ -487,7 +487,8 @@ class CommitmentsTestsCommon : LightningTestSuite() {
             )
             val localCommitTx = Transactions.TransactionWithInputInfo.CommitTx(commitmentInput, Transaction(2, listOf(), listOf(), 0))
             return Commitments(
-                ChannelVersion.STANDARD,
+                ChannelConfig.standard,
+                ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features),
                 localParams,
                 remoteParams,
                 channelFlags = if (announceChannel) ChannelFlags.AnnounceChannel else ChannelFlags.Empty,
@@ -506,7 +507,7 @@ class CommitmentsTestsCommon : LightningTestSuite() {
         }
 
         fun makeCommitments(toLocal: MilliSatoshi, toRemote: MilliSatoshi, localNodeId: PublicKey, remoteNodeId: PublicKey, announceChannel: Boolean): Commitments {
-            val channelKeys = ChannelKeys(KeyPath("42"), randomKey(), randomKey(), randomKey(), randomKey() , randomKey(), randomBytes32())
+            val channelKeys = ChannelKeys(KeyPath("42"), randomKey(), randomKey(), randomKey(), randomKey(), randomKey(), randomBytes32())
             val localParams = LocalParams(
                 localNodeId, channelKeys, 0.sat, Long.MAX_VALUE, 0.sat, 1.msat, CltvExpiryDelta(144), 50, isFunder = true, ByteVector.empty, Features.empty
             )
@@ -518,7 +519,8 @@ class CommitmentsTestsCommon : LightningTestSuite() {
             )
             val localCommitTx = Transactions.TransactionWithInputInfo.CommitTx(commitmentInput, Transaction(2, listOf(), listOf(), 0))
             return Commitments(
-                ChannelVersion.STANDARD,
+                ChannelConfig.standard,
+                ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features),
                 localParams,
                 remoteParams,
                 channelFlags = if (announceChannel) ChannelFlags.AnnounceChannel else ChannelFlags.Empty,

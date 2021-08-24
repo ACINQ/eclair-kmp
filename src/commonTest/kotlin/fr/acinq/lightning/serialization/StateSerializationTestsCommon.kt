@@ -1,6 +1,7 @@
 package fr.acinq.lightning.serialization
 
 import fr.acinq.bitcoin.Block
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.channel.*
@@ -8,11 +9,13 @@ import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.wire.CommitSig
 import fr.acinq.lightning.wire.LightningMessage
-import fr.acinq.lightning.wire.RevokeAndAck
 import fr.acinq.secp256k1.Hex
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlin.math.max
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalSerializationApi::class)
 class StateSerializationTestsCommon : LightningTestSuite() {
@@ -63,13 +66,16 @@ class StateSerializationTestsCommon : LightningTestSuite() {
         )
         val state = Serialization.deserialize(bin, TestConstants.Alice.nodeParams)
         assertTrue(state is Normal)
+        assertEquals(state.commitments.channelConfig, ChannelConfig.standard)
+        assertEquals(state.commitments.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo, Feature.ZeroReserveChannels, Feature.ZeroConfChannels)))
     }
 
     @Test
     fun `maximum number of HTLCs that is safe to use`() {
-        val (alice, bob) = TestsHelper.reachNormal(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
+        val (alice, bob) = TestsHelper.reachNormal()
+        assertTrue(bob.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
 
-        tailrec fun addHtlcs(sender: Normal, receiver: Normal, amount: MilliSatoshi, count: Int) : Pair<Normal, Normal> = if (count == 0) Pair(sender, receiver) else {
+        tailrec fun addHtlcs(sender: Normal, receiver: Normal, amount: MilliSatoshi, count: Int): Pair<Normal, Normal> = if (count == 0) Pair(sender, receiver) else {
             val (p, _) = TestsHelper.addHtlc(amount, sender, receiver)
             val (alice1, bob1) = p
             assertTrue(alice1 is Normal && bob1 is Normal)
@@ -88,7 +94,7 @@ class StateSerializationTestsCommon : LightningTestSuite() {
             val (_, actions2) = bob3.process(ChannelEvent.ExecuteCommand(commandSign0))
             val commitSig1 = actions2.findOutgoingMessage<CommitSig>()
 
-            val bina =LightningMessage.encode(commitSig0)
+            val bina = LightningMessage.encode(commitSig0)
             val binb = LightningMessage.encode(commitSig1)
             return max(bina.size, binb.size)
         }

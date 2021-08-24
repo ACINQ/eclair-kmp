@@ -114,12 +114,12 @@ class WaitForFundingLockedTestsCommon : LightningTestSuite() {
 
     companion object {
         fun init(
-            channelVersion: ChannelVersion = ChannelVersion.STANDARD,
+            channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             currentHeight: Int = TestConstants.defaultBlockHeight,
             fundingAmount: Satoshi = TestConstants.fundingAmount,
             pushMsat: MilliSatoshi = TestConstants.pushMsat
         ): Triple<WaitForFundingLocked, WaitForFundingLocked, Pair<FundingLocked, FundingLocked>> {
-            val (alice, bob, open) = TestsHelper.init(channelVersion, currentHeight, fundingAmount, pushMsat)
+            val (alice, bob, open) = TestsHelper.init(channelType, currentHeight = currentHeight, fundingAmount = fundingAmount, pushMsat = pushMsat)
             val (bob1, actionsBob1) = bob.processEx(ChannelEvent.MessageReceived(open))
             val accept = actionsBob1.findOutgoingMessage<AcceptChannel>()
             val (alice1, actionsAlice1) = alice.processEx(ChannelEvent.MessageReceived(accept))

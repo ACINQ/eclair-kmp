@@ -50,7 +50,8 @@ data class WaitingForRevocation(val nextRemoteCommit: RemoteCommit, val sent: Co
  * theirNextCommitInfo is their next commit tx. The rest of the time, it is their next per-commitment point
  */
 data class Commitments(
-    val channelVersion: ChannelVersion,
+    val channelConfig: ChannelConfig,
+    val channelFeatures: ChannelFeatures,
     val localParams: LocalParams,
     val remoteParams: RemoteParams,
     val channelFlags: Byte,
@@ -68,8 +69,7 @@ data class Commitments(
     val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
 ) {
     init {
-        require(channelVersion.hasStaticRemotekey) { "invalid channel version $channelVersion (static_remote_key is not set)" }
-        require(channelVersion.hasAnchorOutputs) { "invalid channel version $channelVersion (anchor_outputs is not set)" }
+        require(channelFeatures.channelType == ChannelType.SupportedChannelType.AnchorOutputs) { "invalid channel type: ${channelFeatures.channelType.name}" }
     }
 
     fun updateFeatures(localInit: Init, remoteInit: Init) = this.copy(
@@ -113,8 +113,6 @@ data class Commitments(
         val relayedFulfills = localChanges.all.filterIsInstance<UpdateFulfillHtlc>().map { it.id }.toSet()
         return localCommit.spec.htlcs.incomings().filter { relayedFulfills.contains(it.id) && blockHeight >= (it.cltvExpiry - fulfillSafety).toLong() }.toSet()
     }
-
-    val isZeroReserve: Boolean get() = channelVersion.isSet(ChannelVersion.ZERO_RESERVE_BIT)
 
     private fun addLocalProposal(proposal: UpdateMessage): Commitments = copy(localChanges = localChanges.copy(proposed = localChanges.proposed + proposal))
 

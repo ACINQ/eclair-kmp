@@ -25,13 +25,7 @@ import fr.acinq.lightning.utils.msat
 import fr.acinq.lightning.utils.sat
 import kotlin.test.*
 
-class ChannelTypesTestsCommon : LightningTestSuite() {
-
-    @Test
-    fun `standard channel features include deterministic channel key path`() {
-        assertTrue(ChannelVersion.STANDARD.isSet(ChannelVersion.USE_PUBKEY_KEYPATH_BIT))
-        assertTrue(!ChannelVersion.ZEROES.isSet(ChannelVersion.USE_PUBKEY_KEYPATH_BIT))
-    }
+class ChannelDataTestsCommon : LightningTestSuite() {
 
     @Test
     fun `local commit published`() {

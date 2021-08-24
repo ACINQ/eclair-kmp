@@ -1,10 +1,8 @@
 package fr.acinq.lightning.channel
 
 import fr.acinq.bitcoin.*
-import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomBytes32
-import fr.acinq.lightning.MilliSatoshi
-import fr.acinq.lightning.ShortChannelId
 import fr.acinq.lightning.blockchain.*
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.blockchain.fee.OnChainFeerates
@@ -13,10 +11,7 @@ import fr.acinq.lightning.router.ChannelHop
 import fr.acinq.lightning.serialization.Serialization
 import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.transactions.Transactions
-import fr.acinq.lightning.utils.UUID
-import fr.acinq.lightning.utils.msat
-import fr.acinq.lightning.utils.sat
-import fr.acinq.lightning.utils.toByteVector32
+import fr.acinq.lightning.utils.*
 import fr.acinq.lightning.wire.*
 import fr.acinq.secp256k1.Hex
 import org.kodein.memory.file.FileSystem
@@ -68,32 +63,41 @@ internal inline fun <reified T : ChannelAction> List<ChannelAction>.doesNotHave(
 fun Normal.updateFeerate(feerate: FeeratePerKw): Normal = this.copy(currentOnChainFeerates = OnChainFeerates(feerate, feerate, feerate))
 fun Negotiating.updateFeerate(feerate: FeeratePerKw): Negotiating = this.copy(currentOnChainFeerates = OnChainFeerates(feerate, feerate, feerate))
 
+fun Features.add(vararg pairs: Pair<Feature, FeatureSupport>): Features = this.copy(activated = this.activated + mapOf(*pairs))
+fun Features.remove(vararg features: Feature): Features = this.copy(activated = activated.filterKeys { f -> !features.contains(f) })
+
 object TestsHelper {
+
     fun init(
-        channelVersion: ChannelVersion = ChannelVersion.STANDARD,
+        channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
+        aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+        bobFeatures: Features = TestConstants.Bob.nodeParams.features,
         currentHeight: Int = TestConstants.defaultBlockHeight,
         fundingAmount: Satoshi = TestConstants.fundingAmount,
         pushMsat: MilliSatoshi = TestConstants.pushMsat,
         channelOrigin: ChannelOrigin? = null
     ): Triple<WaitForAcceptChannel, WaitForOpenChannel, OpenChannel> {
+        val aliceNodeParams = TestConstants.Alice.nodeParams.copy(features = aliceFeatures)
+        val bobNodeParams = TestConstants.Bob.nodeParams.copy(features = bobFeatures)
         var alice: ChannelState = WaitForInit(
-            StaticParams(TestConstants.Alice.nodeParams, TestConstants.Bob.keyManager.nodeId),
+            StaticParams(aliceNodeParams, TestConstants.Bob.keyManager.nodeId),
             currentTip = Pair(currentHeight, Block.RegtestGenesisBlock.header),
             currentOnChainFeerates = OnChainFeerates(TestConstants.feeratePerKw, TestConstants.feeratePerKw, TestConstants.feeratePerKw)
         )
         var bob: ChannelState = WaitForInit(
-            StaticParams(TestConstants.Bob.nodeParams, TestConstants.Alice.keyManager.nodeId),
+            StaticParams(bobNodeParams, TestConstants.Alice.keyManager.nodeId),
             currentTip = Pair(currentHeight, Block.RegtestGenesisBlock.header),
             currentOnChainFeerates = OnChainFeerates(TestConstants.feeratePerKw, TestConstants.feeratePerKw, TestConstants.feeratePerKw)
         )
         val channelFlags = 0.toByte()
-        var aliceChannelParams = TestConstants.Alice.channelParams
-        val bobChannelParams = TestConstants.Bob.channelParams
-        if (channelVersion.isSet(ChannelVersion.ZERO_RESERVE_BIT)) {
+        var aliceChannelParams = TestConstants.Alice.channelParams.copy(features = aliceFeatures)
+        val bobChannelParams = TestConstants.Bob.channelParams.copy(features = bobFeatures)
+        // If Bob accepts zero-reserve channels, Alice is nice and doesn't require a reserve from Bob.
+        if (bobFeatures.hasFeature(Feature.ZeroReserveChannels)) {
             aliceChannelParams = aliceChannelParams.copy(channelReserve = 0.sat)
         }
-        val aliceInit = Init(ByteVector(aliceChannelParams.features.toByteArray()))
-        val bobInit = Init(ByteVector(bobChannelParams.features.toByteArray()))
+        val aliceInit = Init(aliceFeatures.toByteArray().toByteVector())
+        val bobInit = Init(bobFeatures.toByteArray().toByteVector())
         val ra = alice.process(
             ChannelEvent.InitFunder(
                 ByteVector32.Zeroes,
@@ -104,13 +108,14 @@ object TestsHelper {
                 aliceChannelParams,
                 bobInit,
                 channelFlags,
-                channelVersion,
+                ChannelConfig.standard,
+                channelType,
                 channelOrigin
             )
         )
         alice = ra.first
         assertTrue(alice is WaitForAcceptChannel)
-        val rb = bob.process(ChannelEvent.InitFundee(ByteVector32.Zeroes, bobChannelParams, aliceInit))
+        val rb = bob.process(ChannelEvent.InitFundee(ByteVector32.Zeroes, bobChannelParams, ChannelConfig.standard, aliceInit))
         bob = rb.first
         assertTrue(bob is WaitForOpenChannel)
         val open = ra.second.findOutgoingMessage<OpenChannel>()
@@ -118,12 +123,14 @@ object TestsHelper {
     }
 
     fun reachNormal(
-        channelVersion: ChannelVersion = ChannelVersion.STANDARD,
+        channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
+        aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+        bobFeatures: Features = TestConstants.Bob.nodeParams.features,
         currentHeight: Int = TestConstants.defaultBlockHeight,
         fundingAmount: Satoshi = TestConstants.fundingAmount,
         pushMsat: MilliSatoshi = TestConstants.pushMsat
     ): Pair<Normal, Normal> {
-        val (a, b, open) = init(channelVersion, currentHeight, fundingAmount, pushMsat)
+        val (a, b, open) = init(channelType, aliceFeatures, bobFeatures, currentHeight, fundingAmount, pushMsat)
         var alice = a as ChannelState
         var bob = b as ChannelState
         var rb = bob.process(ChannelEvent.MessageReceived(open))
@@ -133,7 +140,7 @@ object TestsHelper {
         alice = ra.first
         val makeFundingTx = run {
             val candidates = ra.second.filterIsInstance<ChannelAction.Blockchain.MakeFundingTx>()
-            if (candidates.isEmpty()) throw IllegalArgumentException("cannot find MakeFundingTx")
+            assertTrue(candidates.isNotEmpty(), "cannot find funding tx")
             candidates.first()
         }
         val fundingTx = Transaction(
@@ -152,7 +159,7 @@ object TestsHelper {
         alice = ra.first
         val watchConfirmed = run {
             val candidates = ra.second.findWatches<WatchConfirmed>()
-            if (candidates.isEmpty()) throw IllegalArgumentException("cannot find WatchConfirmed")
+            assertTrue(candidates.isNotEmpty(), "cannot find watch confirmed on funding tx")
             candidates.first()
         }
 
@@ -203,8 +210,8 @@ object TestsHelper {
 
     fun localClose(s: ChannelState): Pair<Closing, LocalCommitPublished> {
         assertTrue(s is ChannelStateWithCommitments)
-        assertEquals(ChannelVersion.STANDARD, s.commitments.channelVersion)
-        // an error occurs and alice publishes her commit tx
+        assertEquals(ChannelType.SupportedChannelType.AnchorOutputs, s.commitments.channelFeatures.channelType)
+        // an error occurs and s publishes their commit tx
         val commitTx = s.commitments.localCommit.publishableTxs.commitTx.tx
         val (s1, actions1) = s.process(ChannelEvent.MessageReceived(Error(ByteVector32.Zeroes, "oops")))
         assertTrue(s1 is Closing)
@@ -247,7 +254,7 @@ object TestsHelper {
 
     fun remoteClose(rCommitTx: Transaction, s: ChannelState): Pair<Closing, RemoteCommitPublished> {
         assertTrue(s is ChannelStateWithCommitments)
-        assertEquals(ChannelVersion.STANDARD, s.commitments.channelVersion)
+        assertEquals(ChannelType.SupportedChannelType.AnchorOutputs, s.commitments.channelFeatures.channelType)
         // we make s believe r unilaterally closed the channel
         val (s1, actions1) = s.process(ChannelEvent.WatchReceived(WatchEventSpent(s.channelId, BITCOIN_FUNDING_SPENT, rCommitTx)))
         assertTrue(s1 is Closing)
@@ -421,26 +428,45 @@ object TestsHelper {
     }
 
     // we check that serialization works by checking that deserialize(serialize(state)) == state
-    fun checkSerialization(state: ChannelStateWithCommitments, saveFiles: Boolean = false) {
+    private fun checkSerialization(state: ChannelStateWithCommitments, saveFiles: Boolean = false) {
         val serializedv1 = fr.acinq.lightning.serialization.v1.Serialization.serialize(state)
         val serializedv2 = fr.acinq.lightning.serialization.v2.Serialization.serialize(state)
+        val serializedv3 = fr.acinq.lightning.serialization.v3.Serialization.serialize(state)
 
         fun save(blob: ByteArray, suffix: String) {
             val name = (state::class.simpleName ?: "serialized") + "_${Hex.encode(Crypto.sha256(blob).take(8).toByteArray())}.$suffix"
             val file: Path = FileSystem.workingDir().resolve(name)
             file.openWriteableFile(false).putBytes(blob)
         }
+
         if (saveFiles) {
             save(serializedv1, "v1")
             save(serializedv2, "v2")
+            save(serializedv3, "v3")
         }
+
+        // Before v3, we had a single set of hard-coded channel features, so they will not match if the test added new channel features that weren't supported then.
+        fun maskChannelFeatures(state: ChannelStateWithCommitments): ChannelStateWithCommitments = when (state) {
+            is WaitForRemotePublishFutureCommitment -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is WaitForFundingConfirmed -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is WaitForFundingLocked -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is Normal -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is ShuttingDown -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is Negotiating -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is Closing -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+            is Closed -> state.copy(state = state.state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features))))
+            is ErrorInformationLeak -> state.copy(commitments = state.commitments.copy(channelFeatures = ChannelFeatures(ChannelType.SupportedChannelType.AnchorOutputs.features)))
+        }
+
         val deserializedv1 = Serialization.deserialize(serializedv1, state.staticParams.nodeParams)
-        assertEquals(deserializedv1, state, "serialization error (v1)")
+        assertEquals(maskChannelFeatures(deserializedv1), maskChannelFeatures(state), "serialization error (v1)")
         val deserializedv2 = Serialization.deserialize(serializedv2, state.staticParams.nodeParams)
-        assertEquals(deserializedv2, state, "serialization error (v2)")
+        assertEquals(maskChannelFeatures(deserializedv2), maskChannelFeatures(state), "serialization error (v2)")
+        val deserializedv3 = Serialization.deserialize(serializedv3, state.staticParams.nodeParams)
+        assertEquals(deserializedv3, state, "serialization error (v3)")
     }
 
-    fun checkSerialization(actions: List<ChannelAction>) {
+    private fun checkSerialization(actions: List<ChannelAction>) {
         // we check that serialization works everytime we're suppose to persist channel data
         actions.filterIsInstance<ChannelAction.Storage.StoreState>().forEach { checkSerialization(it.data) }
     }
@@ -451,4 +477,5 @@ object TestsHelper {
         checkSerialization(result.second)
         return result
     }
+
 }

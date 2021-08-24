@@ -5,10 +5,8 @@ import fr.acinq.lightning.*
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.crypto.ShaChain
 import fr.acinq.lightning.transactions.Transactions
-import fr.acinq.lightning.utils.BitField
 import fr.acinq.lightning.utils.Either
 import fr.acinq.lightning.utils.UUID
-import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.*
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -189,7 +187,19 @@ data class LocalParams constructor(
         from.features
     )
 
-    fun export(nodeParams: NodeParams) = fr.acinq.lightning.channel.LocalParams(nodeId, nodeParams.keyManager.channelKeys(fundingKeyPath), dustLimit, maxHtlcValueInFlightMsat, channelReserve, htlcMinimum, toSelfDelay, maxAcceptedHtlcs, isFunder, defaultFinalScriptPubKey, features)
+    fun export(nodeParams: NodeParams) = fr.acinq.lightning.channel.LocalParams(
+        nodeId,
+        nodeParams.keyManager.channelKeys(fundingKeyPath),
+        dustLimit,
+        maxHtlcValueInFlightMsat,
+        channelReserve,
+        htlcMinimum,
+        toSelfDelay,
+        maxAcceptedHtlcs,
+        isFunder,
+        defaultFinalScriptPubKey,
+        features
+    )
 }
 
 @OptIn(ExperimentalUnsignedTypes::class)
@@ -248,9 +258,24 @@ data class ChannelVersion(@Serializable(with = ByteVectorKSerializer::class) val
         require(bits.size() == 4) { "channel version takes 4 bytes" }
     }
 
-    constructor(from: fr.acinq.lightning.channel.ChannelVersion) : this(from.bits.bytes.toByteVector())
+    companion object {
+        // NB: this is the only value that was supported in v1
+        val standard = ChannelVersion(ByteVector("0000000f"))
 
-    fun export() = fr.acinq.lightning.channel.ChannelVersion(BitField.from(bits.toByteArray()))
+        // This is the corresponding channel config
+        val channelConfig = fr.acinq.lightning.channel.ChannelConfig.standard
+
+        // These are the corresponding channel features
+        val channelFeatures = fr.acinq.lightning.channel.ChannelFeatures(
+            setOf(
+                Feature.Wumbo,
+                Feature.StaticRemoteKey,
+                Feature.AnchorOutputs,
+                Feature.ZeroReserveChannels,
+                Feature.ZeroConfChannels,
+            )
+        )
+    }
 }
 
 @Serializable
@@ -280,7 +305,7 @@ data class Commitments(
     val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
 ) {
     constructor(from: fr.acinq.lightning.channel.Commitments) : this(
-        ChannelVersion(from.channelVersion),
+        ChannelVersion.standard,
         LocalParams(from.localParams),
         RemoteParams(from.remoteParams),
         from.channelFlags,
@@ -299,7 +324,8 @@ data class Commitments(
     )
 
     fun export(nodeParams: NodeParams) = fr.acinq.lightning.channel.Commitments(
-        channelVersion.export(),
+        ChannelVersion.channelConfig,
+        ChannelVersion.channelFeatures,
         localParams.export(nodeParams),
         remoteParams.export(),
         channelFlags,
@@ -484,7 +510,7 @@ data class WaitForFundingCreated(
         from.initialFeerate,
         from.remoteFirstPerCommitmentPoint,
         from.channelFlags,
-        ChannelVersion(from.channelVersion),
+        ChannelVersion.standard,
         from.lastSent
     )
 }
@@ -510,7 +536,7 @@ data class InitFunder(
         LocalParams(from.localParams),
         from.remoteInit,
         from.channelFlags,
-        ChannelVersion(from.channelVersion),
+        ChannelVersion.standard,
     )
 }
 
@@ -557,7 +583,7 @@ data class WaitForFundingInternal(
         from.pushAmount,
         from.initialFeerate,
         from.remoteFirstPerCommitmentPoint,
-        ChannelVersion(from.channelVersion),
+        ChannelVersion.standard,
         from.lastSent
     )
 }
@@ -592,7 +618,7 @@ data class WaitForFundingSigned(
         from.localCommitTx,
         RemoteCommit(from.remoteCommit),
         from.channelFlags,
-        ChannelVersion(from.channelVersion),
+        ChannelVersion.standard,
         from.lastSent
     )
 }
@@ -868,7 +894,7 @@ object ShaChainSerializer : KSerializer<ShaChain> {
 
     override fun deserialize(decoder: Decoder): ShaChain {
         val surrogate = decoder.decodeSerializableValue(Surrogate.serializer())
-        return ShaChain(surrogate.knownHashes.map { it.first.toBooleanList() to ByteVector32(it.second) }.toMap(), surrogate.lastIndex)
+        return ShaChain(surrogate.knownHashes.associate { it.first.toBooleanList() to ByteVector32(it.second) }, surrogate.lastIndex)
     }
 
     private fun List<Boolean>.toBinaryString(): String = this.map { if (it) '1' else '0' }.joinToString(separator = "")

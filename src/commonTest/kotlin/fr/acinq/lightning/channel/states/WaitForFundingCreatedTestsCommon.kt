@@ -1,6 +1,7 @@
 package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.blockchain.WatchConfirmed
 import fr.acinq.lightning.blockchain.WatchSpent
@@ -19,7 +20,7 @@ import kotlin.test.assertTrue
 class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
     @Test
     fun `recv FundingCreated`() {
-        val (_, bob, fundingCreated) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
+        val (_, bob, fundingCreated) = init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat)
         val (bob1, actions1) = bob.process(ChannelEvent.MessageReceived(fundingCreated))
         assertTrue { bob1 is WaitForFundingConfirmed }
         actions1.findOutgoingMessage<FundingSigned>()
@@ -31,7 +32,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv FundingCreated (with channel origin)`() {
-        val (_, bob, fundingCreated) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat, ChannelOrigin.PayToOpenOrigin(ByteVector32.One, 42.sat))
+        val (_, bob, fundingCreated) = init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat, channelOrigin = ChannelOrigin.PayToOpenOrigin(ByteVector32.One, 42.sat))
         val (bob1, actions1) = bob.process(ChannelEvent.MessageReceived(fundingCreated))
         assertTrue { bob1 is WaitForFundingConfirmed }
         actions1.findOutgoingMessage<FundingSigned>()
@@ -44,7 +45,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv FundingCreated (funder can't pay fees)`() {
-        val (_, bob, fundingCreated) = init(ChannelVersion.STANDARD, 1_000_100.sat, 1_000_000.sat.toMilliSatoshi())
+        val (_, bob, fundingCreated) = init(ChannelType.SupportedChannelType.AnchorOutputs, 1_000_100.sat, 1_000_000.sat.toMilliSatoshi())
         val (bob1, actions1) = bob.process(ChannelEvent.MessageReceived(fundingCreated))
         actions1.hasOutgoingMessage<Error>()
         assertTrue { bob1 is Aborted }
@@ -52,7 +53,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv Error`() {
-        val (_, bob, _) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
+        val (_, bob, _) = init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat)
         val (bob1, actions1) = bob.process(ChannelEvent.MessageReceived(Error(ByteVector32.Zeroes, "oops")))
         assertTrue { bob1 is Aborted }
         assertTrue { actions1.isEmpty() }
@@ -60,7 +61,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv CMD_CLOSE`() {
-        val (_, bob, _) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
+        val (_, bob, _) = init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat)
         val (bob1, actions1) = bob.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
         assertTrue { bob1 is Aborted }
         assertTrue { actions1.isEmpty() }
@@ -68,7 +69,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv Disconnected`() {
-        val (_, bob, fundingCreated) = init(ChannelVersion.STANDARD, TestConstants.fundingAmount, TestConstants.pushMsat)
+        val (_, bob, fundingCreated) = init(ChannelType.SupportedChannelType.AnchorOutputs, TestConstants.fundingAmount, TestConstants.pushMsat)
         val (bob1, _) = bob.process(ChannelEvent.MessageReceived(fundingCreated))
         assertTrue { bob1 is WaitForFundingConfirmed }
         val (bob2, actions2) = bob1.process(ChannelEvent.Disconnected)
@@ -77,8 +78,15 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
     }
 
     companion object {
-        fun init(channelVersion: ChannelVersion, fundingAmount: Satoshi, pushAmount: MilliSatoshi, channelOrigin: ChannelOrigin? = null): Triple<WaitForFundingSigned, WaitForFundingCreated, FundingCreated> {
-            val (a, b, open) = TestsHelper.init(channelVersion, 0, fundingAmount, pushAmount, channelOrigin)
+        fun init(
+            channelType: ChannelType.SupportedChannelType,
+            fundingAmount: Satoshi,
+            pushAmount: MilliSatoshi,
+            aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+            bobFeatures: Features = TestConstants.Bob.nodeParams.features,
+            channelOrigin: ChannelOrigin? = null
+        ): Triple<WaitForFundingSigned, WaitForFundingCreated, FundingCreated> {
+            val (a, b, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, 0, fundingAmount, pushAmount, channelOrigin)
             val (b1, actions) = b.process(ChannelEvent.MessageReceived(open))
             val accept = actions.findOutgoingMessage<AcceptChannel>()
             val (a1, actions2) = a.process(ChannelEvent.MessageReceived(accept))

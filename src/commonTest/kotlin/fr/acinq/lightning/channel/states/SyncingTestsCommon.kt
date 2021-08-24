@@ -3,6 +3,7 @@ package fr.acinq.lightning.channel.states
 import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.Transaction
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
 import fr.acinq.lightning.blockchain.WatchConfirmed
 import fr.acinq.lightning.blockchain.WatchEventSpent
@@ -20,10 +21,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class SyncingTestsCommon : LightningTestSuite() {
+
     @Test
     fun `detect that a remote commit tx was published`() {
         val (alice, bob, _) = run {
-            val (alice, bob) = reachNormal()
+            val (alice, bob) = init()
             disconnect(alice, bob)
         }
         val aliceCommitTx = alice.state.commitments.localCommit.publishableTxs.commitTx.tx
@@ -39,7 +41,7 @@ class SyncingTestsCommon : LightningTestSuite() {
     @Test
     fun `detect that a revoked commit tx was published`() {
         val (_, bob, revokedTx) = run {
-            val (alice, bob) = reachNormal()
+            val (alice, bob) = init()
             val (nodes, _, _) = TestsHelper.addHtlc(10_000_000.msat, payer = alice, payee = bob)
             val (alice1, bob1) = nodes
             val (alice2, bob2) = TestsHelper.crossSign(alice1, bob1)
@@ -61,7 +63,7 @@ class SyncingTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CMD_FORCECLOSE`() {
         val (alice, _, _) = run {
-            val (alice, bob) = reachNormal()
+            val (alice, bob) = init()
             disconnect(alice, bob)
         }
         val (alice1, actions1) = alice.process(ChannelEvent.ExecuteCommand(CMD_FORCECLOSE))
@@ -70,22 +72,28 @@ class SyncingTestsCommon : LightningTestSuite() {
     }
 
     companion object {
+        fun init(): Pair<Normal, Normal> {
+            // NB: we disable channel backups to ensure Bob sends his channel_reestablish on reconnection.
+            return reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        }
+
         fun disconnect(alice: Normal, bob: Normal): Triple<Syncing, Syncing, Pair<ChannelReestablish, ChannelReestablish>> {
             val (alice1, _) = alice.processEx(ChannelEvent.Disconnected)
             val (bob1, _) = bob.processEx(ChannelEvent.Disconnected)
             assertTrue(alice1 is Offline)
             assertTrue(bob1 is Offline)
 
-            val localInit = Init(ByteVector(TestConstants.Alice.channelParams.features.toByteArray()))
-            val remoteInit = Init(ByteVector(TestConstants.Bob.channelParams.features.toByteArray()))
+            val aliceInit = Init(ByteVector(alice1.state.commitments.localParams.features.toByteArray()))
+            val bobInit = Init(ByteVector(bob1.state.commitments.localParams.features.toByteArray()))
 
-            val (alice2, actions) = alice1.processEx(ChannelEvent.Connected(localInit, remoteInit))
+            val (alice2, actions) = alice1.processEx(ChannelEvent.Connected(aliceInit, bobInit))
             assertTrue(alice2 is Syncing)
             val channelReestablishA = actions.findOutgoingMessage<ChannelReestablish>()
-            val (bob2, actions1) = bob1.processEx(ChannelEvent.Connected(remoteInit, localInit))
+            val (bob2, actions1) = bob1.processEx(ChannelEvent.Connected(bobInit, aliceInit))
             assertTrue(bob2 is Syncing)
             val channelReestablishB = actions1.findOutgoingMessage<ChannelReestablish>()
             return Triple(alice2, bob2, Pair(channelReestablishA, channelReestablishB))
         }
     }
+
 }

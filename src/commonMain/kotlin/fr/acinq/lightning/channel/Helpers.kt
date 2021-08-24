@@ -6,6 +6,7 @@ import fr.acinq.bitcoin.Crypto.sha256
 import fr.acinq.bitcoin.Script.pay2wsh
 import fr.acinq.bitcoin.Script.write
 import fr.acinq.lightning.Feature
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.NodeParams
 import fr.acinq.lightning.blockchain.BITCOIN_OUTPUT_SPENT
@@ -56,7 +57,13 @@ object Helpers {
         }
 
     /** Called by the fundee. */
-    fun validateParamsFundee(nodeParams: NodeParams, open: OpenChannel, channelVersion: ChannelVersion): Either<ChannelException, Unit> {
+    fun validateParamsFundee(nodeParams: NodeParams, open: OpenChannel, localParams: LocalParams, remoteFeatures: Features): Either<ChannelException, ChannelFeatures> {
+        // NB: we only accept channels from peers who support explicit channel type negotiation.
+        val channelType = open.channelType ?: return Either.Left(MissingChannelType(open.temporaryChannelId, ChannelType.SupportedChannelType.AnchorOutputs))
+        if (channelType != ChannelType.SupportedChannelType.AnchorOutputs) {
+            return Either.Left(InvalidChannelType(open.temporaryChannelId, ChannelType.SupportedChannelType.AnchorOutputs, channelType))
+        }
+
         // BOLT #2: if the chain_hash value, within the open_channel, message is set to a hash of a chain that is unknown to the receiver:
         // MUST reject the channel.
         if (nodeParams.chainHash != open.chainHash) {
@@ -96,8 +103,8 @@ object Helpers {
             return Either.Left(DustLimitTooLarge(open.temporaryChannelId, open.dustLimitSatoshis, nodeParams.maxRemoteDustLimit))
         }
 
-        if (channelVersion.isSet(ChannelVersion.ZERO_RESERVE_BIT)) {
-            // in zero-reserve channels, we don't make any requirements on the fundee's reserve (set by the funder in the open_message).
+        if (open.channelReserveSatoshis == 0.sat && localParams.features.hasFeature(Feature.ZeroReserveChannels)) {
+            // NB: if the funder doesn't require us to have a reserve, we can't ensure that dust_limit_satoshis is greater than our reserve.
         } else {
             // BOLT #2: The receiving node MUST fail the channel if: dust_limit_satoshis is greater than channel_reserve_satoshis.
             if (open.dustLimitSatoshis > open.channelReserveSatoshis) {
@@ -128,11 +135,31 @@ object Helpers {
             return Either.Left(ChannelReserveTooHigh(open.temporaryChannelId, open.channelReserveSatoshis, reserveToFundingRatio, nodeParams.maxReserveToFundingRatio))
         }
 
-        return Either.Right(Unit)
+        val channelFeatures = ChannelFeatures(
+            buildSet {
+                addAll(channelType.features)
+                if (Features.canUseFeature(localParams.features, remoteFeatures, Feature.Wumbo)) add(Feature.Wumbo)
+                if (open.channelReserveSatoshis == 0.sat) add(Feature.ZeroReserveChannels)
+                // NB: we currently force unconfirmed channels regardless of what our peer supports.
+                // We should fix that once it is fully specified.
+                if (localParams.features.hasFeature(Feature.ZeroConfChannels)) add(Feature.ZeroConfChannels)
+            }
+        )
+
+        return Either.Right(channelFeatures)
     }
 
     /** Called by the funder. */
-    fun validateParamsFunder(nodeParams: NodeParams, open: OpenChannel, accept: AcceptChannel): Either<ChannelException, Unit> {
+    fun validateParamsFunder(nodeParams: NodeParams, init: ChannelEvent.InitFunder, open: OpenChannel, accept: AcceptChannel): Either<ChannelException, ChannelFeatures> {
+        require(open.channelType != null) { "we should have sent a channel type in open_channel" }
+        if (accept.channelType == null) {
+            // We only open channels to peers who support explicit channel type negotiation.
+            return Either.Left(MissingChannelType(accept.temporaryChannelId, open.channelType!!))
+        }
+        if (open.channelType != accept.channelType) {
+            return Either.Left(InvalidChannelType(accept.temporaryChannelId, open.channelType!!, accept.channelType!!))
+        }
+
         if (accept.maxAcceptedHtlcs > Channel.MAX_ACCEPTED_HTLCS) {
             return Either.Left(InvalidMaxAcceptedHtlcs(accept.temporaryChannelId, accept.maxAcceptedHtlcs, Channel.MAX_ACCEPTED_HTLCS))
         }
@@ -155,8 +182,8 @@ object Helpers {
             return Either.Left(ToSelfDelayTooHigh(accept.temporaryChannelId, accept.toSelfDelay, nodeParams.maxToLocalDelayBlocks))
         }
 
-        if ((open.channelVersion ?: ChannelVersion.STANDARD).isSet(ChannelVersion.ZERO_RESERVE_BIT)) {
-            // in zero-reserve channels, we don't make any requirements on the fundee's reserve (set by the funder in the open_message).
+        if (open.channelReserveSatoshis == 0.sat) {
+            // if we proposed a zero-reserve channel to our peer, we don't make any additional requirement on dust limit.
         } else {
             // if channel_reserve_satoshis from the open_channel message is less than dust_limit_satoshis:
             // MUST reject the channel. Other fields have the same requirements as their counterparts in open_channel.
@@ -175,7 +202,18 @@ object Helpers {
             return Either.Left(ChannelReserveTooHigh(open.temporaryChannelId, accept.channelReserveSatoshis, reserveToFundingRatio, nodeParams.maxReserveToFundingRatio))
         }
 
-        return Either.Right(Unit)
+        val channelFeatures = ChannelFeatures(
+            buildSet {
+                addAll(init.channelType.features)
+                if (Features.canUseFeature(init.localParams.features, Features(init.remoteInit.features), Feature.Wumbo)) add(Feature.Wumbo)
+                if (open.channelReserveSatoshis == 0.sat || accept.channelReserveSatoshis == 0.sat) add(Feature.ZeroReserveChannels)
+                // NB: we currently force unconfirmed channels regardless of what our peer supports.
+                // We should fix that once it is fully specified.
+                if (init.localParams.features.hasFeature(Feature.ZeroConfChannels)) add(Feature.ZeroConfChannels)
+            }
+        )
+
+        return Either.Right(channelFeatures)
     }
 
     /**
@@ -543,7 +581,6 @@ object Helpers {
          * @return a list of transactions (one per output that we can claim).
          */
         fun claimRemoteCommitTxOutputs(keyManager: KeyManager, commitments: Commitments, remoteCommit: RemoteCommit, tx: Transaction, feerates: OnChainFeerates): RemoteCommitPublished {
-            val channelVersion = commitments.channelVersion
             val localParams = commitments.localParams
             val remoteParams = commitments.remoteParams
             val commitInput = commitments.commitInput
@@ -557,7 +594,7 @@ object Helpers {
             )
             require(remoteCommitTx.tx.txid == tx.txid) { "txid mismatch, provided tx is not the current remote commit tx" }
 
-            val channelKeyPath = keyManager.channelKeyPath(localParams, channelVersion)
+            val channelKeyPath = keyManager.channelKeyPath(localParams, commitments.channelConfig)
             val localPaymentPubkey = keyManager.paymentPoint(channelKeyPath).publicKey
             val localHtlcPubkey = Generators.derivePubKey(keyManager.htlcPoint(channelKeyPath).publicKey, remoteCommit.remotePerCommitmentPoint)
             val remoteDelayedPaymentPubkey = Generators.derivePubKey(remoteParams.delayedPaymentBasepoint, remoteCommit.remotePerCommitmentPoint)
@@ -671,7 +708,7 @@ object Helpers {
          */
         private fun extractTxNumber(keyManager: KeyManager, commitments: Commitments, tx: Transaction): Long {
             require(tx.txIn.size == 1) { "commitment tx should have 1 input" }
-            val channelKeyPath = keyManager.channelKeyPath(commitments.localParams, commitments.channelVersion)
+            val channelKeyPath = keyManager.channelKeyPath(commitments.localParams, commitments.channelConfig)
             val obscuredTxNumber = Transactions.decodeTxNumber(tx.txIn.first().sequence, tx.lockTime)
             val localPaymentPoint = keyManager.paymentPoint(channelKeyPath)
             // this tx has been published by remote, so we need to invert local/remote params

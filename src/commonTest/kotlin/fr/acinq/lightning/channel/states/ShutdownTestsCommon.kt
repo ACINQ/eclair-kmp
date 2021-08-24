@@ -2,6 +2,9 @@ package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
 import fr.acinq.lightning.CltvExpiry
+import fr.acinq.lightning.Feature
+import fr.acinq.lightning.FeatureSupport
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
@@ -34,17 +37,19 @@ class ShutdownTestsCommon : LightningTestSuite() {
         val (_, bob) = init()
         val add = CMD_ADD_HTLC(500000000.msat, r1, cltvExpiry = CltvExpiry(300000), TestConstants.emptyOnionPacket, UUID.randomUUID())
         val (bob1, actions1) = bob.processEx(ChannelEvent.ExecuteCommand(add))
-        assertTrue { bob1 is ShuttingDown }
-        assertTrue { actions1.any { it is ChannelAction.ProcessCmdRes.AddFailed && it.error == ChannelUnavailable(bob.channelId) } }
+        assertTrue(bob1 is ShuttingDown)
+        assertTrue(actions1.any { it is ChannelAction.ProcessCmdRes.AddFailed && it.error == ChannelUnavailable(bob.channelId) })
+        assertEquals(bob1.commitments.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo)))
     }
 
     @Test
     fun `recv CMD_ADD_HTLC (zero-reserve)`() {
-        val (_, bob) = init(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
+        val (_, bob) = init(bobFeatures = TestConstants.Bob.nodeParams.features.add(Feature.ZeroReserveChannels to FeatureSupport.Optional))
         val add = CMD_ADD_HTLC(500000000.msat, r1, cltvExpiry = CltvExpiry(300000), TestConstants.emptyOnionPacket, UUID.randomUUID())
         val (bob1, actions1) = bob.processEx(ChannelEvent.ExecuteCommand(add))
-        assertTrue { bob1 is ShuttingDown }
-        assertTrue { actions1.any { it is ChannelAction.ProcessCmdRes.AddFailed && it.error == ChannelUnavailable(bob.channelId) } }
+        assertTrue(bob1 is ShuttingDown)
+        assertTrue(actions1.any { it is ChannelAction.ProcessCmdRes.AddFailed && it.error == ChannelUnavailable(bob.channelId) })
+        assertEquals(bob1.commitments.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.Wumbo, Feature.ZeroReserveChannels)))
     }
 
     @Test
@@ -353,10 +358,12 @@ class ShutdownTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv Shutdown with encrypted channel data`() {
-        val (alice0, _) = reachNormal(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
-        val (alice1, actions1) = alice0.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
-        assertTrue(alice1 is Normal)
-        val blob = Serialization.encrypt(alice1.staticParams.nodeParams.nodePrivateKey.value, alice1)
+        val (_, bob0) = reachNormal()
+        assertTrue(bob0.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
+        assertFalse(bob0.commitments.channelFeatures.hasFeature(Feature.ChannelBackupClient)) // this isn't a permanent channel feature
+        val (bob1, actions1) = bob0.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        assertTrue(bob1 is Normal)
+        val blob = Serialization.encrypt(bob1.staticParams.nodeParams.nodePrivateKey.value, bob1)
         val shutdown = actions1.findOutgoingMessage<Shutdown>()
         assertEquals(blob, shutdown.channelData)
     }
@@ -409,7 +416,7 @@ class ShutdownTestsCommon : LightningTestSuite() {
     @Test
     fun `recv BITCOIN_FUNDING_SPENT (their next commit)`() {
         val (alice, bob) = run {
-            val (alice0, bob0) = reachNormal(ChannelVersion.STANDARD)
+            val (alice0, bob0) = reachNormal()
             val (nodes1, _, _) = addHtlc(25_000_000.msat, alice0, bob0)
             val (alice1, bob1) = nodes1
             val (alice2, bob2) = crossSign(alice1, bob1)
@@ -439,7 +446,7 @@ class ShutdownTestsCommon : LightningTestSuite() {
     @Test
     fun `recv BITCOIN_FUNDING_SPENT (revoked tx)`() {
         val (alice, _, revokedTx) = run {
-            val (alice0, bob0) = reachNormal(ChannelVersion.STANDARD)
+            val (alice0, bob0) = reachNormal()
             val (nodes1, _, _) = addHtlc(25_000_000.msat, alice0, bob0)
             val (alice1, bob1) = nodes1
             val (alice2, bob2) = crossSign(alice1, bob1)
@@ -532,8 +539,13 @@ class ShutdownTestsCommon : LightningTestSuite() {
         val r1 = randomBytes32()
         val r2 = randomBytes32()
 
-        fun init(channelVersion: ChannelVersion = ChannelVersion.STANDARD, currentBlockHeight: Int = TestConstants.defaultBlockHeight): Pair<ShuttingDown, ShuttingDown> {
-            val (alice, bob) = reachNormal(channelVersion)
+        fun init(
+            channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
+            currentBlockHeight: Int = TestConstants.defaultBlockHeight,
+            aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+            bobFeatures: Features = TestConstants.Bob.nodeParams.features,
+        ): Pair<ShuttingDown, ShuttingDown> {
+            val (alice, bob) = reachNormal(channelType, aliceFeatures, bobFeatures, currentBlockHeight)
             val (_, cmdAdd1) = makeCmdAdd(300_000_000.msat, bob.staticParams.nodeParams.nodeId, currentBlockHeight.toLong(), r1)
             val (alice1, actions) = alice.processEx(ChannelEvent.ExecuteCommand(cmdAdd1))
             val htlc1 = actions.findOutgoingMessage<UpdateAddHtlc>()
@@ -561,9 +573,10 @@ class ShutdownTestsCommon : LightningTestSuite() {
             val (alice2, _) = alice1.processEx(ChannelEvent.MessageReceived(shutdown1))
             assertTrue(alice2 is ShuttingDown)
             assertTrue(bob1 is ShuttingDown)
-            if (alice2.commitments.isZeroReserve) assertFalse(shutdown.channelData.isEmpty())
-            if (bob1.commitments.isZeroReserve) assertFalse(shutdown1.channelData.isEmpty())
+            if (alice2.commitments.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown.channelData.isEmpty())
+            if (bob1.commitments.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown1.channelData.isEmpty())
             return Pair(alice2, bob1)
         }
     }
+
 }

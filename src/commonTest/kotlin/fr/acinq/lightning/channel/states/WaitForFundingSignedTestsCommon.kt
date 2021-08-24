@@ -1,6 +1,8 @@
 package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
+import fr.acinq.lightning.Feature
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_DEPTHOK
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
 import fr.acinq.lightning.blockchain.WatchConfirmed
@@ -34,9 +36,19 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv FundingSigned with encrypted channel data`() {
-        val (_, bob, fundingSigned) = init(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
+        val (alice, bob, fundingSigned) = init()
+        assertTrue(alice.localParams.features.hasFeature(Feature.ChannelBackupProvider))
+        assertTrue(bob.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
         val blob = Serialization.encrypt(bob.staticParams.nodeParams.nodePrivateKey.value, bob)
         assertEquals(blob, fundingSigned.channelData)
+    }
+
+    @Test
+    fun `recv FundingSigned without encrypted channel data`() {
+        val (alice, bob, fundingSigned) = init(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        assertTrue(alice.localParams.features.hasFeature(Feature.ChannelBackupProvider))
+        assertFalse(bob.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
+        assertTrue(fundingSigned.channelData.isEmpty())
     }
 
     @Test
@@ -73,11 +85,13 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
 
     companion object {
         fun init(
-            channelVersion: ChannelVersion = ChannelVersion.STANDARD,
+            channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             currentHeight: Int = TestConstants.defaultBlockHeight,
-            fundingAmount: Satoshi = TestConstants.fundingAmount
+            fundingAmount: Satoshi = TestConstants.fundingAmount,
+            aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
+            bobFeatures: Features = TestConstants.Bob.nodeParams.features,
         ): Triple<WaitForFundingSigned, WaitForFundingConfirmed, FundingSigned> {
-            val (alice, bob, open) = TestsHelper.init(channelVersion, currentHeight, fundingAmount)
+            val (alice, bob, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, currentHeight = currentHeight, fundingAmount = fundingAmount)
             val (bob1, actionsBob1) = bob.process(ChannelEvent.MessageReceived(open))
             val accept = actionsBob1.findOutgoingMessage<AcceptChannel>()
             val (alice1, actionsAlice1) = alice.process(ChannelEvent.MessageReceived(accept))

@@ -1,6 +1,7 @@
 package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.blockchain.*
@@ -140,8 +141,13 @@ class NegotiatingTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv ClosingSigned with encrypted channel data`() {
-        val (_, _, aliceCloseSig) = init(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
-        assertFalse(aliceCloseSig.channelData.isEmpty())
+        val (alice, bob, aliceCloseSig) = init()
+        assertTrue(alice.commitments.localParams.features.hasFeature(Feature.ChannelBackupProvider))
+        assertTrue(bob.commitments.localParams.features.hasFeature(Feature.ChannelBackupClient))
+        assertTrue(aliceCloseSig.channelData.isEmpty())
+        val (_, actions1) = bob.processEx(ChannelEvent.MessageReceived(aliceCloseSig))
+        val bobCloseSig = actions1.hasOutgoingMessage<ClosingSigned>()
+        assertFalse(bobCloseSig.channelData.isEmpty())
     }
 
     @Test
@@ -187,8 +193,8 @@ class NegotiatingTestsCommon : LightningTestSuite() {
     }
 
     companion object {
-        fun init(channelVersion: ChannelVersion = ChannelVersion.STANDARD, tweakFees: Boolean = false, pushMsat: MilliSatoshi = TestConstants.pushMsat): Triple<Negotiating, Negotiating, ClosingSigned> {
-            val (alice, bob) = reachNormal(channelVersion = channelVersion, pushMsat = pushMsat)
+        fun init(channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs, tweakFees: Boolean = false, pushMsat: MilliSatoshi = TestConstants.pushMsat): Triple<Negotiating, Negotiating, ClosingSigned> {
+            val (alice, bob) = reachNormal(channelType = channelType, pushMsat = pushMsat)
             return mutualClose(alice, bob, tweakFees)
         }
 
@@ -215,4 +221,5 @@ class NegotiatingTestsCommon : LightningTestSuite() {
             }
         }
     }
+
 }

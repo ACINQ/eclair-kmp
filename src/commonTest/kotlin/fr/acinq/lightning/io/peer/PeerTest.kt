@@ -4,9 +4,9 @@ import fr.acinq.bitcoin.Block
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.InvoiceDefaultRoutingFees
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
-import fr.acinq.lightning.InvoiceDefaultRoutingFees
 import fr.acinq.lightning.NodeUri
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.db.InMemoryDatabases
@@ -51,7 +51,8 @@ class PeerTest : LightningTestSuite() {
         randomKey().publicKey(),
         randomKey().publicKey(),
         randomKey().publicKey(),
-        0.toByte()
+        0.toByte(),
+        TlvStream(listOf(ChannelTlv.ChannelTypeTlv(ChannelType.SupportedChannelType.AnchorOutputs)))
     )
 
     @Test
@@ -138,7 +139,7 @@ class PeerTest : LightningTestSuite() {
 
         val syncState = syncChannels.first()
         val yourLastPerCommitmentSecret = ByteVector32.Zeroes
-        val channelKeyPath = peer.nodeParams.keyManager.channelKeyPath(syncState.state.commitments.localParams, syncState.state.commitments.channelVersion)
+        val channelKeyPath = peer.nodeParams.keyManager.channelKeyPath(syncState.state.commitments.localParams, syncState.state.commitments.channelConfig)
         val myCurrentPerCommitmentPoint = peer.nodeParams.keyManager.commitmentPoint(channelKeyPath, syncState.state.commitments.localCommit.index)
 
         val channelReestablish = ChannelReestablish(

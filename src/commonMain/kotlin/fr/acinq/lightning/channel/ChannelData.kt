@@ -1,68 +1,16 @@
 package fr.acinq.lightning.channel
 
 import fr.acinq.bitcoin.*
-import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
-import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.Helpers.publishIfNeeded
 import fr.acinq.lightning.channel.Helpers.watchConfirmedIfNeeded
 import fr.acinq.lightning.channel.Helpers.watchSpentIfNeeded
 import fr.acinq.lightning.transactions.Scripts
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.*
-import fr.acinq.lightning.utils.BitField
-import fr.acinq.lightning.utils.UUID
 import fr.acinq.lightning.wire.ClosingSigned
-import fr.acinq.lightning.wire.FailureMessage
-import fr.acinq.lightning.wire.OnionRoutingPacket
 import kotlinx.serialization.Serializable
-
-/*
-       .d8888b.   .d88888b.  888b     d888 888b     d888        d8888 888b    888 8888888b.   .d8888b.
-      d88P  Y88b d88P" "Y88b 8888b   d8888 8888b   d8888       d88888 8888b   888 888  "Y88b d88P  Y88b
-      888    888 888     888 88888b.d88888 88888b.d88888      d88P888 88888b  888 888    888 Y88b.
-      888        888     888 888Y88888P888 888Y88888P888     d88P 888 888Y88b 888 888    888  "Y888b.
-      888        888     888 888 Y888P 888 888 Y888P 888    d88P  888 888 Y88b888 888    888     "Y88b.
-      888    888 888     888 888  Y8P  888 888  Y8P  888   d88P   888 888  Y88888 888    888       "888
-      Y88b  d88P Y88b. .d88P 888   "   888 888   "   888  d8888888888 888   Y8888 888  .d88P Y88b  d88P
-       "Y8888P"   "Y88888P"  888       888 888       888 d88P     888 888    Y888 8888888P"   "Y8888P"
- */
-
-sealed class Command
-
-data class CMD_ADD_HTLC(val amount: MilliSatoshi, val paymentHash: ByteVector32, val cltvExpiry: CltvExpiry, val onion: OnionRoutingPacket, val paymentId: UUID, val commit: Boolean = false) : Command()
-
-sealed class HtlcSettlementCommand : Command() {
-    abstract val id: Long
-}
-
-data class CMD_FULFILL_HTLC(override val id: Long, val r: ByteVector32, val commit: Boolean = false) : HtlcSettlementCommand()
-data class CMD_FAIL_MALFORMED_HTLC(override val id: Long, val onionHash: ByteVector32, val failureCode: Int, val commit: Boolean = false) : HtlcSettlementCommand()
-data class CMD_FAIL_HTLC(override val id: Long, val reason: Reason, val commit: Boolean = false) : HtlcSettlementCommand() {
-    sealed class Reason {
-        data class Bytes(val bytes: ByteVector) : Reason()
-        data class Failure(val message: FailureMessage) : Reason()
-    }
-}
-
-object CMD_SIGN : Command()
-data class CMD_UPDATE_FEE(val feerate: FeeratePerKw, val commit: Boolean = false) : Command()
-
-sealed class CloseCommand : Command()
-data class CMD_CLOSE(val scriptPubKey: ByteVector?) : CloseCommand()
-object CMD_FORCECLOSE : CloseCommand()
-
-/*
-      8888888b.        d8888 88888888888     d8888
-      888  "Y88b      d88888     888        d88888
-      888    888     d88P888     888       d88P888
-      888    888    d88P 888     888      d88P 888
-      888    888   d88P  888     888     d88P  888
-      888    888  d88P   888     888    d88P   888
-      888  .d88P d8888888888     888   d8888888888
-      8888888P" d88P     888     888  d88P     888
- */
 
 /**
  * Details about a force-close where we published our commitment.
@@ -431,7 +379,7 @@ data class ChannelKeys(
 }
 
 @OptIn(ExperimentalUnsignedTypes::class)
-data class LocalParams constructor(
+data class LocalParams(
     val nodeId: PublicKey,
     val channelKeys: ChannelKeys,
     val dustLimit: Satoshi,
@@ -461,40 +409,6 @@ data class RemoteParams(
     val htlcBasepoint: PublicKey,
     val features: Features
 )
-
-@Serializable
-data class ChannelVersion(val bits: BitField) {
-    init {
-        require(bits.byteSize == SIZE_BYTE) { "channel version takes 4 bytes" }
-    }
-
-    infix fun or(other: ChannelVersion) = ChannelVersion(bits or other.bits)
-    infix fun and(other: ChannelVersion) = ChannelVersion(bits and other.bits)
-    infix fun xor(other: ChannelVersion) = ChannelVersion(bits xor other.bits)
-
-    fun isSet(bit: Int) = bits.getRight(bit)
-
-    val hasStaticRemotekey: Boolean by lazy { isSet(USE_STATIC_REMOTEKEY_BIT) }
-    val hasAnchorOutputs: Boolean by lazy { isSet(USE_ANCHOR_OUTPUTS_BIT) }
-
-    companion object {
-        const val SIZE_BYTE = 4
-        val ZEROES = ChannelVersion(BitField(SIZE_BYTE))
-        const val USE_PUBKEY_KEYPATH_BIT = 0 // bit numbers start at 0
-        const val USE_STATIC_REMOTEKEY_BIT = 1
-        const val USE_ANCHOR_OUTPUTS_BIT = 2
-        const val ZERO_RESERVE_BIT = 3
-
-        private fun fromBit(bit: Int) = ChannelVersion(BitField(SIZE_BYTE).apply { setRight(bit) })
-
-        private val USE_PUBKEY_KEYPATH = fromBit(USE_PUBKEY_KEYPATH_BIT)
-        private val USE_STATIC_REMOTEKEY = fromBit(USE_STATIC_REMOTEKEY_BIT)
-        private val USE_ANCHOR_OUTPUTS = fromBit(USE_ANCHOR_OUTPUTS_BIT)
-        val ZERO_RESERVE = fromBit(ZERO_RESERVE_BIT)
-
-        val STANDARD = ZEROES or USE_PUBKEY_KEYPATH or USE_STATIC_REMOTEKEY or USE_ANCHOR_OUTPUTS
-    }
-}
 
 object ChannelFlags {
     const val AnnounceChannel = 0x01.toByte()

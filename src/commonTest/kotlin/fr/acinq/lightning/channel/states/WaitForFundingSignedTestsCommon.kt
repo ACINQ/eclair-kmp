@@ -50,7 +50,7 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CMD_CLOSE`() {
         val (alice, _, _) = init()
-        val (alice1, actions1) = alice.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        val (alice1, actions1) = alice.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
         assertTrue(alice1 is Aborted)
         assertNull(actions1.findOutgoingMessageOpt<Error>())
     }

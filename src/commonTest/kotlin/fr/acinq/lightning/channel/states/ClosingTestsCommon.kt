@@ -18,7 +18,8 @@ import fr.acinq.lightning.channel.TestsHelper.htlcSuccessTxs
 import fr.acinq.lightning.channel.TestsHelper.htlcTimeoutTxs
 import fr.acinq.lightning.channel.TestsHelper.localClose
 import fr.acinq.lightning.channel.TestsHelper.makeCmdAdd
-import fr.acinq.lightning.channel.TestsHelper.mutualClose
+import fr.acinq.lightning.channel.TestsHelper.mutualCloseAlice
+import fr.acinq.lightning.channel.TestsHelper.mutualCloseBob
 import fr.acinq.lightning.channel.TestsHelper.processEx
 import fr.acinq.lightning.channel.TestsHelper.reachNormal
 import fr.acinq.lightning.channel.TestsHelper.remoteClose
@@ -32,23 +33,6 @@ import fr.acinq.lightning.wire.*
 import kotlin.test.*
 
 class ClosingTestsCommon : LightningTestSuite() {
-    @Test
-    fun `start fee negotiation from configured block target`() {
-        val (alice, bob) = reachNormal()
-        val (alice1, actions) = alice.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
-        val shutdown = actions.findOutgoingMessage<Shutdown>()
-        val (_, actions1) = bob.processEx(ChannelEvent.MessageReceived(shutdown))
-        val shutdown1 = actions1.findOutgoingMessage<Shutdown>()
-        val (alice2, actions2) = alice1.processEx(ChannelEvent.MessageReceived(shutdown1))
-        val closingSigned = actions2.findOutgoingMessage<ClosingSigned>()
-        val expectedProposedFee = Helpers.Closing.firstClosingFee(
-            (alice2 as Negotiating).commitments,
-            alice2.localShutdown.scriptPubKey.toByteArray(),
-            alice2.remoteShutdown.scriptPubKey.toByteArray(),
-            alice2.currentOnChainFeerates.mutualCloseFeerate
-        )
-        assertEquals(closingSigned.feeSatoshis, expectedProposedFee)
-    }
 
     @Test
     fun `recv CMD_ADD_HTLC`() {
@@ -78,43 +62,39 @@ class ClosingTestsCommon : LightningTestSuite() {
     @Test
     fun `recv BITCOIN_FUNDING_SPENT (mutual close before converging)`() {
         val (alice0, bob0) = reachNormal()
-        // alice initiates a closing
-        val (alice1, aliceActions1) = alice0.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        // alice initiates a closing with a low fee
+        val (alice1, aliceActions1) = alice0.process(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, ClosingFeerates(FeeratePerKw(500.sat), FeeratePerKw(250.sat), FeeratePerKw(1000.sat)))))
         val shutdown0 = aliceActions1.findOutgoingMessage<Shutdown>()
         val (bob1, bobActions1) = bob0.processEx(ChannelEvent.MessageReceived(shutdown0))
+        assertTrue(bob1 is Negotiating)
         val shutdown1 = bobActions1.findOutgoingMessage<Shutdown>()
-        val (alice2, aliceActions2) = alice1.processEx(ChannelEvent.MessageReceived(shutdown1))
-
-        // agreeing on a closing fee
+        val (alice2, aliceActions2) = alice1.process(ChannelEvent.MessageReceived(shutdown1))
+        assertTrue(alice2 is Negotiating)
         val closingSigned0 = aliceActions2.findOutgoingMessage<ClosingSigned>()
-        val aliceCloseFee = closingSigned0.feeSatoshis
-        val bob2 = (bob1 as Negotiating).updateFeerate(FeeratePerKw(5_000.sat))
-        val (_, bobActions3) = bob2.processEx(ChannelEvent.MessageReceived(closingSigned0))
-        val closingSigned1 = bobActions3.findOutgoingMessage<ClosingSigned>()
-        val bobCloseFee = closingSigned1.feeSatoshis
-        val (alice3, _) = alice2.processEx(ChannelEvent.MessageReceived(closingSigned1))
 
-        // they don't converge yet, but alice has a publishable commit tx now
-        assertNotEquals(aliceCloseFee, bobCloseFee)
-        val mutualCloseTx = (alice3 as Negotiating).bestUnpublishedClosingTx
+        // they don't converge yet, but bob has a publishable commit tx now
+        val (bob2, bobActions2) = bob1.processEx(ChannelEvent.MessageReceived(closingSigned0))
+        assertTrue(bob2 is Negotiating)
+        val mutualCloseTx = bob2.bestUnpublishedClosingTx
         assertNotNull(mutualCloseTx)
+        val closingSigned1 = bobActions2.findOutgoingMessage<ClosingSigned>()
+        assertNotEquals(closingSigned0.feeSatoshis, closingSigned1.feeSatoshis)
 
-        // let's make alice publish this closing tx
-        val (alice4, aliceActions4) = alice3.processEx(ChannelEvent.MessageReceived(Error(ByteVector32.Zeroes, "")))
-        assertTrue { alice4 is Closing }
-        assertEquals(ChannelAction.Blockchain.PublishTx(mutualCloseTx.tx), aliceActions4.filterIsInstance<ChannelAction.Blockchain.PublishTx>().first())
-        assertEquals(mutualCloseTx, (alice4 as Closing).mutualClosePublished.last())
-        aliceActions4.has<ChannelAction.Storage.StoreChannelClosing>()
+        // let's make bob publish this closing tx
+        val (bob3, bobActions3) = bob2.processEx(ChannelEvent.MessageReceived(Error(ByteVector32.Zeroes, "")))
+        assertTrue(bob3 is Closing)
+        assertEquals(ChannelAction.Blockchain.PublishTx(mutualCloseTx.tx), bobActions3.filterIsInstance<ChannelAction.Blockchain.PublishTx>().first())
+        assertEquals(mutualCloseTx, bob3.mutualClosePublished.last())
+        bobActions3.has<ChannelAction.Storage.StoreChannelClosing>()
 
         // actual test starts here
-        val (alice5, _) = alice4.processEx(ChannelEvent.WatchReceived(WatchEventSpent(ByteVector32.Zeroes, BITCOIN_FUNDING_SPENT, mutualCloseTx.tx)))
-        val (alice6, aliceActions6) = alice5.processEx(ChannelEvent.WatchReceived(WatchEventConfirmed(ByteVector32.Zeroes, BITCOIN_TX_CONFIRMED(mutualCloseTx.tx), 0, 0, mutualCloseTx.tx)))
-
-        assertTrue { alice6 is Closed }
-        val storeChannelClosed = aliceActions6.filterIsInstance<ChannelAction.Storage.StoreChannelClosed>().firstOrNull()
+        val (bob4, _) = bob3.processEx(ChannelEvent.WatchReceived(WatchEventSpent(ByteVector32.Zeroes, BITCOIN_FUNDING_SPENT, mutualCloseTx.tx)))
+        val (bob5, bobActions5) = bob4.processEx(ChannelEvent.WatchReceived(WatchEventConfirmed(ByteVector32.Zeroes, BITCOIN_TX_CONFIRMED(mutualCloseTx.tx), 0, 0, mutualCloseTx.tx)))
+        assertTrue(bob5 is Closed)
+        val storeChannelClosed = bobActions5.filterIsInstance<ChannelAction.Storage.StoreChannelClosed>().firstOrNull()
         assertNotNull(storeChannelClosed)
-        assertTrue { storeChannelClosed.closingType == ChannelClosingType.Mutual }
-        assertTrue { storeChannelClosed.txids == listOf(mutualCloseTx.tx.txid) }
+        assertEquals(storeChannelClosed.closingType, ChannelClosingType.Mutual)
+        assertEquals(storeChannelClosed.txids, listOf(mutualCloseTx.tx.txid))
     }
 
     @Test
@@ -124,11 +104,11 @@ class ClosingTestsCommon : LightningTestSuite() {
 
         // actual test starts here
         val (alice1, actions1) = alice0.processEx(ChannelEvent.WatchReceived(WatchEventConfirmed(ByteVector32.Zeroes, BITCOIN_TX_CONFIRMED(mutualCloseTx.tx), 0, 0, mutualCloseTx.tx)))
-        assertTrue { alice1 is Closed }
+        assertTrue(alice1 is Closed)
         val storeChannelClosed = actions1.filterIsInstance<ChannelAction.Storage.StoreChannelClosed>().firstOrNull()
         assertNotNull(storeChannelClosed)
-        assertTrue { storeChannelClosed.closingType == ChannelClosingType.Mutual }
-        assertTrue { storeChannelClosed.txids == listOf(mutualCloseTx.tx.txid) }
+        assertEquals(storeChannelClosed.closingType, ChannelClosingType.Mutual)
+        assertEquals(storeChannelClosed.txids, listOf(mutualCloseTx.tx.txid))
     }
 
     @Test
@@ -138,23 +118,16 @@ class ClosingTestsCommon : LightningTestSuite() {
         val bobFinalScript = Script.write(Script.pay2pkh(pubKey)).toByteVector()
 
         val (alice1, bob1) = reachNormal()
-        val (alice2, bob2, aliceClosingSigned1) = mutualClose(alice1, bob1, tweakFees = true, scriptPubKey = bobFinalScript)
+        val (_, bob2, aliceClosingSigned) = mutualCloseBob(alice1, bob1, scriptPubKey = bobFinalScript)
 
-        val (bob3, bobActions3) = bob2.processEx(ChannelEvent.MessageReceived(aliceClosingSigned1))
+        val (bob3, bobActions3) = bob2.processEx(ChannelEvent.MessageReceived(aliceClosingSigned))
+        assertTrue(bob3 is Closing)
         val bobClosingSigned = bobActions3.findOutgoingMessageOpt<ClosingSigned>()
         assertNotNull(bobClosingSigned)
-
-        val (alice4, aliceActions4) = alice2.processEx(ChannelEvent.MessageReceived(bobClosingSigned))
-        assertTrue { alice4 is Closing }
-        val aliceClosingSigned2 = aliceActions4.findOutgoingMessageOpt<ClosingSigned>()
-        assertNotNull(aliceClosingSigned2)
-
-        val (bob5, bobActions5) = bob3.processEx(ChannelEvent.MessageReceived(aliceClosingSigned2))
-        assertTrue { bob5 is Closing }
-        val storeChannelClosing = bobActions5.filterIsInstance<ChannelAction.Storage.StoreChannelClosing>().firstOrNull()
+        val storeChannelClosing = bobActions3.filterIsInstance<ChannelAction.Storage.StoreChannelClosing>().firstOrNull()
         assertNotNull(storeChannelClosing)
-        assertFalse { storeChannelClosing.isSentToDefaultAddress }
-        assertTrue { storeChannelClosing.closingAddress == bobBtcAddr }
+        assertFalse(storeChannelClosing.isSentToDefaultAddress)
+        assertEquals(storeChannelClosing.closingAddress, bobBtcAddr)
     }
 
     @Test
@@ -1588,7 +1561,7 @@ class ClosingTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CMD_CLOSE`() {
         val (alice0, _, _) = initMutualClose()
-        val cmdClose = CMD_CLOSE(null)
+        val cmdClose = CMD_CLOSE(null, null)
         val (_, actions) = alice0.processEx(ChannelEvent.ExecuteCommand(cmdClose))
         val commandError = actions.filterIsInstance<ChannelAction.ProcessCmdRes.NotExecuted>().first()
         assertEquals(cmdClose, commandError.cmd)
@@ -1761,7 +1734,7 @@ class ClosingTestsCommon : LightningTestSuite() {
                 }.flatten()
             }
 
-            val (alice1, bob1, aliceCloseSig) = mutualClose(mutableAlice, mutableBob)
+            val (alice1, bob1, aliceCloseSig) = mutualCloseAlice(mutableAlice, mutableBob)
             val (alice2, bob2) = NegotiatingTestsCommon.converge(alice1, bob1, aliceCloseSig) ?: error("converge should not return null")
 
             return Triple(alice2, bob2, bobCommitTxs)

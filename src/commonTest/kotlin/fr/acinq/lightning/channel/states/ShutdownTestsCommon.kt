@@ -354,7 +354,7 @@ class ShutdownTestsCommon : LightningTestSuite() {
     @Test
     fun `recv Shutdown with encrypted channel data`() {
         val (alice0, _) = reachNormal(ChannelVersion.STANDARD or ChannelVersion.ZERO_RESERVE)
-        val (alice1, actions1) = alice0.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        val (alice1, actions1) = alice0.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
         assertTrue(alice1 is Normal)
         val blob = Serialization.encrypt(alice1.staticParams.nodeParams.nodePrivateKey.value, alice1)
         val shutdown = actions1.findOutgoingMessage<Shutdown>()
@@ -472,9 +472,9 @@ class ShutdownTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CMD_CLOSE`() {
         val (alice, _) = init()
-        val (alice1, actions) = alice.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+        val (alice1, actions) = alice.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
         assertEquals(alice1, alice)
-        assertEquals(actions, listOf(ChannelAction.ProcessCmdRes.NotExecuted(CMD_CLOSE(null), ClosingAlreadyInProgress(alice.channelId))))
+        assertEquals(actions, listOf(ChannelAction.ProcessCmdRes.NotExecuted(CMD_CLOSE(null, null), ClosingAlreadyInProgress(alice.channelId))))
     }
 
     private fun testLocalForceClose(alice: ChannelState, actions: List<ChannelAction>) {
@@ -554,7 +554,7 @@ class ShutdownTestsCommon : LightningTestSuite() {
 
         fun shutdown(alice: ChannelState, bob: ChannelState): Pair<ShuttingDown, ShuttingDown> {
             // Alice initiates a closing
-            val (alice1, actionsAlice) = alice.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null)))
+            val (alice1, actionsAlice) = alice.processEx(ChannelEvent.ExecuteCommand(CMD_CLOSE(null, null)))
             val shutdown = actionsAlice.findOutgoingMessage<Shutdown>()
             val (bob1, actionsBob) = bob.processEx(ChannelEvent.MessageReceived(shutdown))
             val shutdown1 = actionsBob.findOutgoingMessage<Shutdown>()

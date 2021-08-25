@@ -248,7 +248,10 @@ data class PaymentRequest(
         fun decodeAmount(input: String): MilliSatoshi? {
             val amount = when {
                 input.isEmpty() -> null
-                input.last() == 'p' -> MilliSatoshi(input.dropLast(1).toLong() / 10L)
+                input.last() == 'p' -> {
+                    require(input.endsWith("0p")) { "invalid sub-millisatoshi precision" }
+                    MilliSatoshi(input.dropLast(1).toLong() / 10L)
+                }
                 input.last() == 'n' -> MilliSatoshi(input.dropLast(1).toLong() * 100L)
                 input.last() == 'u' -> MilliSatoshi(input.dropLast(1).toLong() * 100000L)
                 input.last() == 'm' -> MilliSatoshi(input.dropLast(1).toLong() * 100000000L)

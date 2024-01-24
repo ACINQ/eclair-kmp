@@ -62,7 +62,8 @@ class HelpersTestsCommon : LightningTestSuite() {
             TxOut(540.sat, Script.pay2sh(Hex.decode("0000000000000000000000000000000000000000"))),
             TxOut(294.sat, Script.pay2wpkh(randomKey().publicKey())),
             TxOut(330.sat, Script.pay2wsh(Hex.decode("0000000000000000000000000000000000000000"))),
-            TxOut(354.sat, Script.pay2tr(randomKey().publicKey().xOnly()))
+            TxOut(354.sat, Script.pay2tr(randomKey().publicKey().xOnly())),
+            TxOut(0.sat, listOf(OP_RETURN, OP_PUSHDATA(Hex.decode("deadbeef")))),
         )
 
         fun toClosingTx(txOut: List<TxOut>): Transactions.TransactionWithInputInfo.ClosingTx {

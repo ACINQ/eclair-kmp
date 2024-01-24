@@ -196,6 +196,7 @@ object Transactions {
                 Script.isPay2wpkh(script) -> 294.sat
                 Script.isPay2wsh(script) -> 330.sat
                 Script.isNativeWitnessScript(script) -> 354.sat
+                script[0] == OP_RETURN -> 0.sat // OP_RETURN is never dust
                 else -> 546.sat
             }
         }.getOrElse { 546.sat }

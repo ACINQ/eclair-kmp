@@ -89,12 +89,13 @@ data class Normal(
             }
             is ChannelCommand.Close.MutualClose -> {
                 val allowAnySegwit = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.ShutdownAnySegwit)
+                val allowOpReturn = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.SimpleClose)
                 val localScriptPubkey = cmd.scriptPubKey ?: commitments.params.localParams.defaultFinalScriptPubKey
                 when {
                     localShutdown != null -> handleCommandError(cmd, ClosingAlreadyInProgress(channelId), channelUpdate)
                     commitments.changes.localHasUnsignedOutgoingHtlcs() -> handleCommandError(cmd, CannotCloseWithUnsignedOutgoingHtlcs(channelId), channelUpdate)
                     commitments.changes.localHasUnsignedOutgoingUpdateFee() -> handleCommandError(cmd, CannotCloseWithUnsignedOutgoingUpdateFee(channelId), channelUpdate)
-                    !Helpers.Closing.isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit) -> handleCommandError(cmd, InvalidFinalScript(channelId), channelUpdate)
+                    !Helpers.Closing.isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit, allowOpReturn) -> handleCommandError(cmd, InvalidFinalScript(channelId), channelUpdate)
                     else -> {
                         val shutdown = Shutdown(channelId, localScriptPubkey)
                         val newState = this@Normal.copy(localShutdown = shutdown, closingFeerates = cmd.feerates)
@@ -270,6 +271,7 @@ data class Normal(
                     }
                     is Shutdown -> {
                         val allowAnySegwit = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.ShutdownAnySegwit)
+                        val allowOpReturn = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.SimpleClose)
                         // they have pending unsigned htlcs         => they violated the spec, close the channel
                         // they don't have pending unsigned htlcs
                         //    we have pending unsigned htlcs
@@ -285,7 +287,7 @@ data class Normal(
                         //        there are pending signed changes  => go to SHUTDOWN
                         //        there are no changes              => go to NEGOTIATING
                         when {
-                            !Helpers.Closing.isValidFinalScriptPubkey(cmd.message.scriptPubKey, allowAnySegwit) -> handleLocalError(cmd, InvalidFinalScript(channelId))
+                            !Helpers.Closing.isValidFinalScriptPubkey(cmd.message.scriptPubKey, allowAnySegwit, allowOpReturn) -> handleLocalError(cmd, InvalidFinalScript(channelId))
                             commitments.changes.remoteHasUnsignedOutgoingHtlcs() -> handleLocalError(cmd, CannotCloseWithUnsignedOutgoingHtlcs(channelId))
                             commitments.changes.remoteHasUnsignedOutgoingUpdateFee() -> handleLocalError(cmd, CannotCloseWithUnsignedOutgoingUpdateFee(channelId))
                             commitments.changes.localHasUnsignedOutgoingHtlcs() -> {
@@ -407,7 +409,7 @@ data class Normal(
                                             spliceStatus.command.replyTo.complete(ChannelFundingResponse.Failure.InsufficientFunds(balanceAfterFees, liquidityFees, spliceStatus.command.currentFeeCredit))
                                             val action = listOf(ChannelAction.Message.Send(TxAbort(channelId, InvalidSpliceRequest(channelId).message)))
                                             Pair(this@Normal.copy(spliceStatus = SpliceStatus.Aborted), action)
-                                        } else if (spliceStatus.command.spliceOut?.scriptPubKey?.let { Helpers.Closing.isValidFinalScriptPubkey(it, allowAnySegwit = true) } == false) {
+                                        } else if (spliceStatus.command.spliceOut?.scriptPubKey?.let { Helpers.Closing.isValidFinalScriptPubkey(it, allowAnySegwit = true, allowOpReturn = true) } == false) {
                                             logger.warning { "cannot do splice: invalid splice-out script" }
                                             spliceStatus.command.replyTo.complete(ChannelFundingResponse.Failure.InvalidSpliceOutPubKeyScript)
                                             val action = listOf(ChannelAction.Message.Send(TxAbort(channelId, InvalidSpliceRequest(channelId).message)))

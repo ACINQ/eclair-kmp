@@ -296,7 +296,7 @@ object Helpers {
         // used only to compute tx weights and estimate fees
         private val dummyPublicKey by lazy { PrivateKey(ByteArray(32) { 1.toByte() }).publicKey() }
 
-        private fun isValidFinalScriptPubkey(scriptPubKey: ByteArray, allowAnySegwit: Boolean): Boolean {
+        private fun isValidFinalScriptPubkey(scriptPubKey: ByteArray, allowAnySegwit: Boolean, allowOpReturn: Boolean): Boolean {
             return runTrying {
                 val script = Script.parse(scriptPubKey)
                 when {
@@ -306,12 +306,13 @@ object Helpers {
                     Script.isPay2wsh(script) -> true
                     // option_shutdown_anysegwit doesn't cover segwit v0
                     Script.isNativeWitnessScript(script) && script[0] != OP_0 -> allowAnySegwit
+                    script[0] == OP_RETURN -> allowOpReturn
                     else -> false
                 }
             }.getOrElse { false }
         }
 
-        fun isValidFinalScriptPubkey(scriptPubKey: ByteVector, allowAnySegwit: Boolean): Boolean = isValidFinalScriptPubkey(scriptPubKey.toByteArray(), allowAnySegwit)
+        fun isValidFinalScriptPubkey(scriptPubKey: ByteVector, allowAnySegwit: Boolean, allowOpReturn: Boolean): Boolean = isValidFinalScriptPubkey(scriptPubKey.toByteArray(), allowAnySegwit, allowOpReturn)
 
         private fun firstClosingFee(commitment: FullCommitment, localScriptPubkey: ByteArray, remoteScriptPubkey: ByteArray, requestedFeerate: ClosingFeerates): ClosingFees {
             // this is just to estimate the weight which depends on the size of the pubkey scripts
@@ -344,8 +345,9 @@ object Helpers {
             closingFees: ClosingFees
         ): Pair<ClosingTx, ClosingSigned> {
             val allowAnySegwit = Features.canUseFeature(commitment.params.localParams.features, commitment.params.remoteParams.features, Feature.ShutdownAnySegwit)
-            require(isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit)) { "invalid localScriptPubkey" }
-            require(isValidFinalScriptPubkey(remoteScriptPubkey, allowAnySegwit)) { "invalid remoteScriptPubkey" }
+            val allowOpReturn = Features.canUseFeature(commitment.params.localParams.features, commitment.params.remoteParams.features, Feature.SimpleClose)
+            require(isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit, allowOpReturn)) { "invalid localScriptPubkey" }
+            require(isValidFinalScriptPubkey(remoteScriptPubkey, allowAnySegwit, allowOpReturn)) { "invalid remoteScriptPubkey" }
             val dustLimit = commitment.params.localParams.dustLimit.max(commitment.params.remoteParams.dustLimit)
             val closingTx = Transactions.makeClosingTx(commitment.commitInput, localScriptPubkey, remoteScriptPubkey, commitment.params.localParams.paysClosingFees, dustLimit, closingFees.preferred, commitment.localCommit.spec)
             val localClosingSig = Transactions.sign(closingTx, channelKeys.fundingKey(commitment.fundingTxIndex))
@@ -379,17 +381,7 @@ object Helpers {
          * The various dust limits are detailed in https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#dust-limits
          */
         fun checkClosingDustAmounts(closingTx: ClosingTx): Boolean {
-            return closingTx.tx.txOut.all { txOut ->
-                val publicKeyScript = Script.parse(txOut.publicKeyScript)
-                when {
-                    Script.isPay2pkh(publicKeyScript) -> txOut.amount >= 546.sat
-                    Script.isPay2sh(publicKeyScript) -> txOut.amount >= 540.sat
-                    Script.isPay2wpkh(publicKeyScript) -> txOut.amount >= 294.sat
-                    Script.isPay2wsh(publicKeyScript) -> txOut.amount >= 330.sat
-                    Script.isNativeWitnessScript(publicKeyScript) -> txOut.amount >= 354.sat
-                    else -> txOut.amount >= 546.sat
-                }
-            }
+            return closingTx.tx.txOut.all { txOut -> txOut.amount >= Transactions.dustLimit(txOut.publicKeyScript) }
         }
 
         /**

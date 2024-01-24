@@ -238,3 +238,93 @@ sealed class ClosingSignedTlv : Tlv {
         }
     }
 }
+
+sealed class ClosingCompleteTlv : Tlv {
+    /** Signature for a closing transaction containing only the closer's output. */
+    data class CloserOutputOnly(val sig: ByteVector64) : ClosingCompleteTlv() {
+        override val tag: Long get() = CloserOutputOnly.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloserOutputOnly> {
+            const val tag: Long = 1
+            override fun read(input: Input): CloserOutputOnly = CloserOutputOnly(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    /** Signature for a closing transaction containing only the closee's output. */
+    data class CloseeOutputOnly(val sig: ByteVector64) : ClosingCompleteTlv() {
+        override val tag: Long get() = CloseeOutputOnly.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloseeOutputOnly> {
+            const val tag: Long = 2
+            override fun read(input: Input): CloseeOutputOnly = CloseeOutputOnly(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    /** Signature for a closing transaction containing the closer and closee's outputs. */
+    data class CloserAndCloseeOutputs(val sig: ByteVector64) : ClosingCompleteTlv() {
+        override val tag: Long get() = CloserAndCloseeOutputs.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloserAndCloseeOutputs> {
+            const val tag: Long = 3
+            override fun read(input: Input): CloserAndCloseeOutputs = CloserAndCloseeOutputs(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    data class ChannelData(val ecb: EncryptedChannelData) : ClosingCompleteTlv() {
+        override val tag: Long get() = ChannelData.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
+
+        companion object : TlvValueReader<ChannelData> {
+            const val tag: Long = 0x47010000
+            override fun read(input: Input): ChannelData = ChannelData(EncryptedChannelData(LightningCodecs.bytes(input, input.availableBytes).toByteVector()))
+        }
+    }
+}
+
+sealed class ClosingSigTlv : Tlv {
+    /** Signature for a closing transaction containing only the closer's output. */
+    data class CloserOutputOnly(val sig: ByteVector64) : ClosingSigTlv() {
+        override val tag: Long get() = CloserOutputOnly.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloserOutputOnly> {
+            const val tag: Long = 1
+            override fun read(input: Input): CloserOutputOnly = CloserOutputOnly(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    /** Signature for a closing transaction containing only the closee's output. */
+    data class CloseeOutputOnly(val sig: ByteVector64) : ClosingSigTlv() {
+        override val tag: Long get() = CloseeOutputOnly.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloseeOutputOnly> {
+            const val tag: Long = 2
+            override fun read(input: Input): CloseeOutputOnly = CloseeOutputOnly(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    /** Signature for a closing transaction containing the closer and closee's outputs. */
+    data class CloserAndCloseeOutputs(val sig: ByteVector64) : ClosingSigTlv() {
+        override val tag: Long get() = CloserAndCloseeOutputs.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(sig.toByteArray(), out)
+
+        companion object : TlvValueReader<CloserAndCloseeOutputs> {
+            const val tag: Long = 3
+            override fun read(input: Input): CloserAndCloseeOutputs = CloserAndCloseeOutputs(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    data class ChannelData(val ecb: EncryptedChannelData) : ClosingSigTlv() {
+        override val tag: Long get() = ChannelData.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
+
+        companion object : TlvValueReader<ChannelData> {
+            const val tag: Long = 0x47010000
+            override fun read(input: Input): ChannelData = ChannelData(EncryptedChannelData(LightningCodecs.bytes(input, input.availableBytes).toByteVector()))
+        }
+    }
+}

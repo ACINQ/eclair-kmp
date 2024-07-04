@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.*
+import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.crypto.sphinx.DecryptedPacket
@@ -51,6 +52,7 @@ class OfferManagerTestsCommon : LightningTestSuite() {
 
     private fun createOffer(offerManager: OfferManager, amount: MilliSatoshi? = null): OfferTypes.Offer {
         val blindingSecret = randomKey()
+        val pathId = randomBytes32()
         val (offer, _) = OfferTypes.Offer.createBlindedOffer(
             amount,
             "Blockaccino",
@@ -58,8 +60,9 @@ class OfferManagerTestsCommon : LightningTestSuite() {
             offerManager.walletParams.trampolineNode.id,
             offerManager.nodeParams.features,
             blindingSecret,
+            pathId,
         )
-        offerManager.registerOffer(offer, null)
+        offerManager.registerOffer(offer, pathId)
         return offer
     }
 

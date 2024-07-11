@@ -252,7 +252,7 @@ class OutgoingPaymentHandlerTestsCommon : LightningTestSuite() {
                 Feature.VariableLengthOnion to FeatureSupport.Optional,
                 Feature.PaymentSecret to FeatureSupport.Mandatory,
                 Feature.BasicMultiPartPayment to FeatureSupport.Optional,
-                Feature.TrampolinePayment to FeatureSupport.Optional
+                Feature.ExperimentalTrampolinePayment to FeatureSupport.Optional
             )
             Bolt11Invoice.create(
                 chain = Chain.Mainnet,

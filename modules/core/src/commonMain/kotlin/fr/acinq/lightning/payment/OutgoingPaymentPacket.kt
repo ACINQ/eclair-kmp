@@ -43,7 +43,7 @@ object OutgoingPaymentPacket {
      * @param hop the trampoline hop from the trampoline node to the recipient.
      */
     fun buildPacketToTrampolineRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment) || invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
+        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             val trampolinePayload = PaymentOnion.NodeRelayPayload.create(amount, expiry, hop.nextNodeId)
@@ -67,7 +67,7 @@ object OutgoingPaymentPacket {
      * @param expiry cltv expiry that should be received by the final recipient.
      */
     fun buildPacketToTrampolinePeer(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment) || invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
+        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             buildOnion(listOf(invoice.nodeId), listOf(finalPayload), invoice.paymentHash)

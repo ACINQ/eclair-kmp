@@ -23,9 +23,6 @@ data class Syncing(val state: PersistedChannelState, val channelReestablishSent:
             is ChannelCommand.MessageReceived -> when (cmd.message) {
                 is ChannelReestablish -> {
                     val (nextState, actions) = when (state) {
-                        is LegacyWaitForFundingConfirmed -> {
-                            Pair(state, listOf())
-                        }
                         is WaitForFundingSigned -> {
                             when (cmd.message.nextFundingTxId) {
                                 // We retransmit our commit_sig, and will send our tx_signatures once we've received their commit_sig.
@@ -105,13 +102,6 @@ data class Syncing(val state: PersistedChannelState, val channelReestablishSent:
                             val channelReady = ChannelReady(state.commitments.channelId, nextPerCommitmentPoint)
                             actions.add(ChannelAction.Message.Send(channelReady))
 
-                            Pair(state, actions)
-                        }
-                        is LegacyWaitForFundingLocked -> {
-                            logger.debug { "re-sending channel_ready" }
-                            val nextPerCommitmentPoint = channelKeys().commitmentPoint(1)
-                            val channelReady = ChannelReady(state.commitments.channelId, nextPerCommitmentPoint)
-                            val actions = listOf(ChannelAction.Message.Send(channelReady))
                             Pair(state, actions)
                         }
                         is Normal -> {

@@ -223,7 +223,6 @@ data class Init(val features: Features, val tlvs: TlvStream<InitTlv> = TlvStream
         val readers = mapOf(
             InitTlv.Networks.tag to InitTlv.Networks.Companion as TlvValueReader<InitTlv>,
             InitTlv.OptionWillFund.tag to InitTlv.OptionWillFund.Companion as TlvValueReader<InitTlv>,
-            InitTlv.PhoenixAndroidLegacyNodeId.tag to InitTlv.PhoenixAndroidLegacyNodeId.Companion as TlvValueReader<InitTlv>,
         )
 
         override fun read(input: Input): Init {

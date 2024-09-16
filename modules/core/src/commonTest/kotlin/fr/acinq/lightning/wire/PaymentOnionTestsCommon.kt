@@ -3,13 +3,14 @@ package fr.acinq.lightning.wire
 import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.PublicKey
-import fr.acinq.lightning.CltvExpiry
-import fr.acinq.lightning.CltvExpiryDelta
-import fr.acinq.lightning.MilliSatoshi
-import fr.acinq.lightning.ShortChannelId
+import fr.acinq.bitcoin.byteVector
+import fr.acinq.lightning.*
+import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.payment.Bolt11Invoice
+import fr.acinq.lightning.payment.Bolt12Invoice
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.utils.msat
+import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.secp256k1.Hex
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -57,6 +58,22 @@ class PaymentOnionTestsCommon : LightningTestSuite() {
     }
 
     @Test
+    fun `encode - decode blinded channel relay payload`() {
+        val testCases = mapOf(
+            // @formatter:off
+            TlvStream(OnionPaymentPayloadTlv.EncryptedRecipientData(ByteVector("0ae636dc5963bcfe3a2f055c8b8f6d2c5cd818362032404a6e35995ba57e101eac7e5fa04bb33a8920f1")), OnionPaymentPayloadTlv.PathKey(PublicKey.fromHex("02988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e"))) to Hex.decode("4f 0a2a0ae636dc5963bcfe3a2f055c8b8f6d2c5cd818362032404a6e35995ba57e101eac7e5fa04bb33a8920f1 0c2102988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e"),
+            // @formatter:on
+        )
+
+        testCases.forEach {
+            val encoded = PaymentOnion.PerHopPayload.tlvSerializer.write(it.key)
+            assertContentEquals(it.value, encoded)
+            val decoded = PaymentOnion.BlindedChannelRelayPayload.read(it.value).right!!
+            assertEquals(it.key, decoded.records)
+        }
+    }
+
+    @Test
     fun `encode - decode node relay per-hop payload`() {
         val nodeId = PublicKey(Hex.decode("02edabbd16b41c8371b92ef2f04c1185b4f03b6dcd52ba9b78d9d7c89c8f221145"))
         val expected = PaymentOnion.NodeRelayPayload(TlvStream(OnionPaymentPayloadTlv.AmountToForward(100_000_000.msat), OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(800_000)), OnionPaymentPayloadTlv.OutgoingNodeId(nodeId)))
@@ -68,6 +85,48 @@ class PaymentOnionTestsCommon : LightningTestSuite() {
         assertEquals(decoded.totalAmount, 100_000_000.msat)
         assertEquals(decoded.outgoingCltv, CltvExpiry(800_000))
         assertEquals(decoded.outgoingNodeId, nodeId)
+
+        val encoded = expected.write()
+        assertContentEquals(bin, encoded)
+    }
+
+    @Test
+    fun `encode - decode node relay to blinded per-hop payload`() {
+        val blindedPath = RouteBlinding.BlindedRoute(
+            EncodedNodeId(PublicKey.fromHex("032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991")),
+            PublicKey.fromHex("02988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e"),
+            listOf(
+                RouteBlinding.BlindedHop(
+                    PublicKey.fromHex("0295d40514096a8be54859e7dfe947b376eaafea8afe5cb4eb2c13ff857ed0b4be"),
+                    ByteVector("0ae636dc5963bcfe3a2f055c8b8f6d2c5cd818362032404a6e35995ba57e101eac7e5fa04bb33a8920f1")
+                ),
+                RouteBlinding.BlindedHop(
+                    PublicKey.fromHex("020e2dbadcc2005e859819ddebbe88a834ae8a6d2b049233c07335f15cd1dc5f22"),
+                    ByteVector("bc211f6ccd409888ca8ab027a5f21d229f9e18ff02cc1161a8344c91bdefc742d221db962561d528ec8f910cf9affeca95a6a9101c3ecd53953fe126a2d780acf9d49304e4bc5499d2a9219171786048c5f1b1e19d27d55ed28f8d")
+                ),
+            )
+        )
+        val paymentInfo = OfferTypes.PaymentInfo(100.msat, 1000, CltvExpiryDelta(144), 1.msat, 500_000_000.msat, Features.empty)
+        val blindedPaths = listOf(Bolt12Invoice.Companion.PaymentBlindedContactInfo(OfferTypes.ContactInfo.BlindedPath(blindedPath), paymentInfo))
+        val features = Features(Feature.TrampolinePayment to FeatureSupport.Optional, Feature.BasicMultiPartPayment to FeatureSupport.Optional)
+        val expected = PaymentOnion.RelayToBlindedPayload(
+            TlvStream(
+                OnionPaymentPayloadTlv.AmountToForward(150_000_000.msat),
+                OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(850_000)),
+                OnionPaymentPayloadTlv.RecipientFeatures(features.toByteArray().toByteVector()),
+                OnionPaymentPayloadTlv.OutgoingBlindedPaths(blindedPaths)
+            )
+        )
+        val bin = Hex.decode(
+            "fd0143 020408f0d180 04030cf850 15080200000000020000 16fd012a032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e66868099102988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e020295d40514096a8be54859e7dfe947b376eaafea8afe5cb4eb2c13ff857ed0b4be002a0ae636dc5963bcfe3a2f055c8b8f6d2c5cd818362032404a6e35995ba57e101eac7e5fa04bb33a8920f1020e2dbadcc2005e859819ddebbe88a834ae8a6d2b049233c07335f15cd1dc5f22005bbc211f6ccd409888ca8ab027a5f21d229f9e18ff02cc1161a8344c91bdefc742d221db962561d528ec8f910cf9affeca95a6a9101c3ecd53953fe126a2d780acf9d49304e4bc5499d2a9219171786048c5f1b1e19d27d55ed28f8d00000064000003e800900000000000000001000000001dcd65000000"
+        )
+
+        val decoded = PaymentOnion.RelayToBlindedPayload.read(bin).right!!
+        assertEquals(decoded, expected)
+        assertEquals(decoded.amountToForward, 150_000_000.msat)
+        assertEquals(decoded.outgoingCltv, CltvExpiry(850_000))
+        assertEquals(decoded.recipientFeatures, features.toByteArray().byteVector())
+        assertEquals(decoded.outgoingBlindedPaths, blindedPaths)
 
         val encoded = expected.write()
         assertContentEquals(bin, encoded)
@@ -89,13 +148,13 @@ class PaymentOnionTestsCommon : LightningTestSuite() {
                 OnionPaymentPayloadTlv.AmountToForward(561.msat),
                 OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(42)),
                 OnionPaymentPayloadTlv.PaymentData(ByteVector32("eec7245d6b7d2ccb30380bfbe2a3648cd7a942653f5aa340edcea1f283686619"), 1105.msat),
-                OnionPaymentPayloadTlv.InvoiceFeatures(features),
+                OnionPaymentPayloadTlv.RecipientFeatures(features),
                 OnionPaymentPayloadTlv.OutgoingNodeId(nodeId),
                 OnionPaymentPayloadTlv.InvoiceRoutingInfo(routingHints)
             )
         )
         val bin = Hex.decode(
-            "f6 02020231 04012a 0822eec7245d6b7d2ccb30380bfbe2a3648cd7a942653f5aa340edcea1f2836866190451 0e2102eec7245d6b7d2ccb30380bfbe2a3648cd7a942653f5aa340edcea1f283686619 fe00010231010a fe000102339b01036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e200000000000000010000000a00000064009002025f7117a78150fe2ef97db7cfc83bd57b2e2c0d0dd25eaf467a4a1c2a45ce148600000000000000020000001400000096000c02a051267759c3a149e3e72372f4e0c4054ba597ebfd0eda78a2273023667205ee00000000000000030000001e000000c80018"
+            "f2 02020231 04012a 0822eec7245d6b7d2ccb30380bfbe2a3648cd7a942653f5aa340edcea1f2836866190451 0e2102eec7245d6b7d2ccb30380bfbe2a3648cd7a942653f5aa340edcea1f283686619 15010a fe000102339b01036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e200000000000000010000000a00000064009002025f7117a78150fe2ef97db7cfc83bd57b2e2c0d0dd25eaf467a4a1c2a45ce148600000000000000020000001400000096000c02a051267759c3a149e3e72372f4e0c4054ba597ebfd0eda78a2273023667205ee00000000000000030000001e000000c80018"
         )
 
         val decoded = PaymentOnion.RelayToNonTrampolinePayload.read(bin).right!!
@@ -213,6 +272,7 @@ class PaymentOnionTestsCommon : LightningTestSuite() {
             // @formatter:off
             TlvStream(OnionPaymentPayloadTlv.AmountToForward(561.msat), OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(1234567)), OnionPaymentPayloadTlv.EncryptedRecipientData(ByteVector("deadbeef")), OnionPaymentPayloadTlv.TotalAmount(1105.msat)) to Hex.decode("13 02020231 040312d687 0a04deadbeef 12020451"),
             TlvStream(OnionPaymentPayloadTlv.AmountToForward(561.msat), OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(1234567)), OnionPaymentPayloadTlv.EncryptedRecipientData(ByteVector("deadbeef")), OnionPaymentPayloadTlv.PathKey(PublicKey.fromHex("036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e2")), OnionPaymentPayloadTlv.TotalAmount(1105.msat)) to Hex.decode("36 02020231 040312d687 0a04deadbeef 0c21036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e2 12020451"),
+            TlvStream(OnionPaymentPayloadTlv.AmountToForward(150_000_000.msat), OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(850_000)), OnionPaymentPayloadTlv.EncryptedRecipientData(ByteVector("bc211f6ccd409888ca8ab027a5f21d229f9e18ff02cc1161a8344c91bdefc742d221db962561d528ec8f910cf9affeca95a6a9101c3ecd53953fe126a2d780acf9d49304e4bc5499d2a9219171786048c5f1b1e19d27d55ed28f8d")), OnionPaymentPayloadTlv.TotalAmount(150_000_000.msat)) to Hex.decode("6e 020408f0d180 04030cf850 0a5bbc211f6ccd409888ca8ab027a5f21d229f9e18ff02cc1161a8344c91bdefc742d221db962561d528ec8f910cf9affeca95a6a9101c3ecd53953fe126a2d780acf9d49304e4bc5499d2a9219171786048c5f1b1e19d27d55ed28f8d 120408f0d180"),
             // @formatter:on
         )
         testCases.forEach {

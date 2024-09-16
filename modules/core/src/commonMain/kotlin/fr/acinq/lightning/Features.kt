@@ -147,6 +147,13 @@ sealed class Feature {
         override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Invoice)
     }
 
+    @Serializable
+    object TrampolinePayment : Feature() {
+        override val rfcName get() = "trampoline_routing"
+        override val mandatory get() = 56
+        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node, FeatureScope.Invoice)
+    }
+
     // The following features have not been standardised, hence the high feature bits to avoid conflicts.
 
     /** This feature bit should be activated when a node accepts having their channel reserve set to 0. */
@@ -187,15 +194,6 @@ sealed class Feature {
         override val rfcName get() = "channel_backup_provider"
         override val mandatory get() = 146
         override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
-    }
-
-    // The version of trampoline enabled by this feature bit does not match the latest spec PR: once the spec is accepted,
-    // we will introduce a new version of trampoline that will work in parallel to this one, until we can safely deprecate it.
-    @Serializable
-    object ExperimentalTrampolinePayment : Feature() {
-        override val rfcName get() = "trampoline_payment_experimental"
-        override val mandatory get() = 148
-        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node, FeatureScope.Invoice)
     }
 
     @Serializable
@@ -288,7 +286,7 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.Quiescence,
             Feature.ChannelType,
             Feature.PaymentMetadata,
-            Feature.ExperimentalTrampolinePayment,
+            Feature.TrampolinePayment,
             Feature.ZeroReserveChannels,
             Feature.WakeUpNotificationClient,
             Feature.WakeUpNotificationProvider,
@@ -327,7 +325,7 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.PaymentSecret to listOf(Feature.VariableLengthOnion),
             Feature.BasicMultiPartPayment to listOf(Feature.PaymentSecret),
             Feature.AnchorOutputs to listOf(Feature.StaticRemoteKey),
-            Feature.ExperimentalTrampolinePayment to listOf(Feature.PaymentSecret),
+            Feature.TrampolinePayment to listOf(Feature.BasicMultiPartPayment),
             Feature.OnTheFlyFunding to listOf(Feature.ExperimentalSplice),
             Feature.FundingFeeCredit to listOf(Feature.OnTheFlyFunding)
         )

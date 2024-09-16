@@ -39,11 +39,11 @@
                         "zero_reserve_channels": "Optional",
                         "wake_up_notification_client": "Optional",
                         "channel_backup_client": "Optional",
-                        "trampoline_payment_experimental": "Optional",
                         "splice_experimental": "Optional"
                     },
                     "unknown": [
-                        137
+                        137,
+                        149
                     ]
                 }
             },
@@ -71,11 +71,11 @@
                         "option_dual_fund": "Mandatory",
                         "option_channel_type": "Mandatory",
                         "wake_up_notification_provider": "Optional",
-                        "channel_backup_provider": "Optional",
-                        "trampoline_payment_experimental": "Optional"
+                        "channel_backup_provider": "Optional"
                     },
                     "unknown": [
-                        139
+                        139,
+                        149
                     ]
                 }
             },

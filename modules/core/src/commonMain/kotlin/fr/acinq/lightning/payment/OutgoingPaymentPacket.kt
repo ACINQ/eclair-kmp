@@ -26,7 +26,7 @@ object OutgoingPaymentPacket {
         return buildOnion(sessionKey, nodes, payloads, associatedData, payloadLength)
     }
 
-    private fun buildOnion(sessionKey: PrivateKey, nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): PacketAndSecrets {
+    fun buildOnion(sessionKey: PrivateKey, nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): PacketAndSecrets {
         require(nodes.size == payloads.size)
         val payloadsBin = payloads.map { it.write() }
         val totalPayloadLength = payloadLength ?: payloadsBin.sumOf { it.size + Sphinx.MacLength }
@@ -43,12 +43,11 @@ object OutgoingPaymentPacket {
      * @param hop the trampoline hop from the trampoline node to the recipient.
      */
     fun buildPacketToTrampolineRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment)) { "invoice must support trampoline" }
+        require(invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             val trampolinePayload = PaymentOnion.NodeRelayPayload.create(amount, expiry, hop.nextNodeId)
-            // We may be paying an older version of lightning-kmp that only supports trampoline packets of size 400.
-            buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, finalPayload), invoice.paymentHash, payloadLength = 400)
+            buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, finalPayload), invoice.paymentHash)
         }
         val trampolineAmount = amount + hop.fee(amount)
         val trampolineExpiry = expiry + hop.cltvExpiryDelta
@@ -67,7 +66,7 @@ object OutgoingPaymentPacket {
      * @param expiry cltv expiry that should be received by the final recipient.
      */
     fun buildPacketToTrampolinePeer(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment)) { "invoice must support trampoline" }
+        require(invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             buildOnion(listOf(invoice.nodeId), listOf(finalPayload), invoice.paymentHash)
@@ -90,17 +89,14 @@ object OutgoingPaymentPacket {
      */
     fun buildPacketToLegacyRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
         val trampolineOnion = run {
-            // NB: the final payload will never reach the recipient, since the trampoline node will convert that to a legacy payment.
-            // We use the smallest final payload possible, otherwise we may overflow the trampoline onion size.
-            val dummyFinalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, null)
             var routingInfo = invoice.routingInfo
             var trampolinePayload = PaymentOnion.RelayToNonTrampolinePayload.create(amount, amount, expiry, hop.nextNodeId, invoice, routingInfo)
-            var trampolineOnion = buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, dummyFinalPayload), invoice.paymentHash)
+            var trampolineOnion = buildOnion(listOf(hop.nodeId), listOf(trampolinePayload), invoice.paymentHash)
             // Ensure that this onion can fit inside the outer 1300 bytes onion. The outer onion fields need ~150 bytes and we add some safety margin.
             while (trampolineOnion.packet.payload.size() > 1000) {
                 routingInfo = routingInfo.dropLast(1)
                 trampolinePayload = PaymentOnion.RelayToNonTrampolinePayload.create(amount, amount, expiry, hop.nextNodeId, invoice, routingInfo)
-                trampolineOnion = buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, dummyFinalPayload), invoice.paymentHash)
+                trampolineOnion = buildOnion(listOf(hop.nodeId), listOf(trampolinePayload), invoice.paymentHash)
             }
             trampolineOnion
         }

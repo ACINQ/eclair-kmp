@@ -151,7 +151,7 @@ sealed class Feature {
     object TrampolinePayment : Feature() {
         override val rfcName get() = "trampoline_routing"
         override val mandatory get() = 56
-        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node, FeatureScope.Invoice)
+        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node, FeatureScope.Invoice, FeatureScope.Bolt12)
     }
 
     // The following features have not been standardised, hence the high feature bits to avoid conflicts.

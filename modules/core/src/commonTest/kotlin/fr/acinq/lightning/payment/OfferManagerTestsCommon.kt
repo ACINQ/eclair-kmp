@@ -95,6 +95,8 @@ class OfferManagerTestsCommon : LightningTestSuite() {
         assertIs<OnionMessageAction.PayInvoice>(payInvoice)
         assertEquals(OfferInvoiceReceived(payOffer, payInvoice.invoice), bobOfferManager.eventsFlow.first())
         assertEquals(payOffer, payInvoice.payOffer)
+        assertTrue(payInvoice.invoice.features.hasFeature(Feature.BasicMultiPartPayment))
+        assertTrue(payInvoice.invoice.features.hasFeature(Feature.TrampolinePayment))
         assertEquals(1, payInvoice.invoice.blindedPaths.size)
         val path = payInvoice.invoice.blindedPaths.first()
         assertEquals(EncodedNodeId(aliceTrampolineKey.publicKey()), path.route.route.firstNodeId)

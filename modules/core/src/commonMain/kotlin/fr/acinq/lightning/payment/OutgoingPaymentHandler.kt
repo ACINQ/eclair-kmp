@@ -311,11 +311,10 @@ class OutgoingPaymentHandler(val nodeParams: NodeParams, val walletParams: Walle
             is Bolt11Invoice -> {
                 val minFinalExpiryDelta = paymentRequest.minFinalExpiryDelta ?: Channel.MIN_CLTV_EXPIRY_DELTA
                 val expiry = nodeParams.paymentRecipientExpiryParams.computeFinalExpiry(currentBlockHeight, minFinalExpiryDelta)
-                val invoiceFeatures = paymentRequest.features
                 if (request.recipient == walletParams.trampolineNode.id) {
                     // We are directly paying our trampoline node.
                     OutgoingPaymentPacket.buildPacketToTrampolinePeer(paymentRequest, request.amount, expiry)
-                } else if (invoiceFeatures.hasFeature(Feature.TrampolinePayment)) {
+                } else if (paymentRequest.features.hasFeature(Feature.TrampolinePayment)) {
                     OutgoingPaymentPacket.buildPacketToTrampolineRecipient(paymentRequest, request.amount, expiry, hop)
                 } else {
                     OutgoingPaymentPacket.buildPacketToLegacyRecipient(paymentRequest, request.amount, expiry, hop)
@@ -325,7 +324,16 @@ class OutgoingPaymentHandler(val nodeParams: NodeParams, val walletParams: Walle
                 // The recipient already included a final cltv-expiry-delta in their invoice blinded paths.
                 val minFinalExpiryDelta = CltvExpiryDelta(0)
                 val expiry = nodeParams.paymentRecipientExpiryParams.computeFinalExpiry(currentBlockHeight, minFinalExpiryDelta)
-                OutgoingPaymentPacket.buildPacketToBlindedRecipient(paymentRequest, request.amount, expiry, hop)
+                if (paymentRequest.features.hasFeature(Feature.TrampolinePayment)) {
+                    // If there are multiple blinded paths, we choose one at random that doesn't require resolving the introduction node.
+                    // If we can't find one, we default to letting our trampoline node relay to the invoice's blinded paths.
+                    when (val path = paymentRequest.blindedPaths.filter { it.route.route.firstNodeId is EncodedNodeId.WithPublicKey }.randomOrNull()) {
+                        null -> OutgoingPaymentPacket.buildPacketToBlindedRecipient(paymentRequest, request.amount, expiry, hop)
+                        else -> OutgoingPaymentPacket.buildPacketToTrampolineRecipient(paymentRequest.paymentHash, request.amount, expiry, path, hop)
+                    }
+                } else {
+                    OutgoingPaymentPacket.buildPacketToBlindedRecipient(paymentRequest, request.amount, expiry, hop)
+                }
             }
         }
     }

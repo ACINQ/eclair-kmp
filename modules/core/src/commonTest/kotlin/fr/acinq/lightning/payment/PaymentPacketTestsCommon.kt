@@ -95,7 +95,7 @@ class PaymentPacketTestsCommon : LightningTestSuite() {
         }
 
         // Wallets don't need to decrypt onions for intermediate nodes, but it's useful to test that encryption works correctly.
-        fun decryptRelayToTrampoline(add: UpdateAddHtlc, privateKey: PrivateKey): Triple<PaymentOnion.FinalPayload, PaymentOnion.NodeRelayPayload, OnionRoutingPacket> {
+        fun decryptRelayToTrampoline(add: UpdateAddHtlc, privateKey: PrivateKey): Triple<PaymentOnion.FinalPayload.Standard, PaymentOnion.NodeRelayPayload, OnionRoutingPacket> {
             val decrypted = Sphinx.peel(privateKey, add.paymentHash, add.onionRoutingPacket).right!!
             assertTrue(decrypted.isLastPacket)
             val outerPayload = PaymentOnion.FinalPayload.Standard.read(decrypted.payload).right!!
@@ -108,6 +108,19 @@ class PaymentPacketTestsCommon : LightningTestSuite() {
             assertNull(innerPayload.records.get<OnionPaymentPayloadTlv.PaymentMetadata>())
             assertNull(innerPayload.records.get<OnionPaymentPayloadTlv.RecipientFeatures>())
             assertNull(innerPayload.records.get<OnionPaymentPayloadTlv.InvoiceRoutingInfo>())
+            return Triple(outerPayload, innerPayload, decryptedInner.nextPacket)
+        }
+
+        // Wallets don't need to decrypt onions for intermediate nodes, but it's useful to test that encryption works correctly.
+        fun decryptRelayToBlindedTrampoline(add: UpdateAddHtlc, privateKey: PrivateKey): Triple<PaymentOnion.FinalPayload.Standard, PaymentOnion.BlindedChannelRelayPayload, OnionRoutingPacket> {
+            val decrypted = Sphinx.peel(privateKey, add.paymentHash, add.onionRoutingPacket).right!!
+            assertTrue(decrypted.isLastPacket)
+            val outerPayload = PaymentOnion.FinalPayload.Standard.read(decrypted.payload).right!!
+            val trampolineOnion = outerPayload.records.get<OnionPaymentPayloadTlv.TrampolineOnion>()
+            assertNotNull(trampolineOnion)
+            val decryptedInner = Sphinx.peel(privateKey, add.paymentHash, trampolineOnion.packet).right!!
+            assertFalse(decryptedInner.isLastPacket)
+            val innerPayload = PaymentOnion.BlindedChannelRelayPayload.read(decryptedInner.payload).right!!
             return Triple(outerPayload, innerPayload, decryptedInner.nextPacket)
         }
 
@@ -639,6 +652,201 @@ class PaymentPacketTestsCommon : LightningTestSuite() {
             val evePriv = PrivateKey.fromHex("4545454545454545454545454545454545454545454545454545454545454545")
             val blinding = PublicKey.fromHex("02c952268f1501cf108839f4f5d0fbb41a97de778a6ead8caf161c569bd4df1ad7")
             val add = UpdateAddHtlc(randomBytes32(), 1, 150_000_000.msat, paymentHash, CltvExpiry(800_000), onionForEve, blinding, null)
+            val payload = IncomingPaymentPacket.decrypt(add, evePriv).right
+            assertNotNull(payload)
+            assertIs<PaymentOnion.FinalPayload.Blinded>(payload)
+            assertEquals(150_000_000.msat, payload.amount)
+            assertEquals(CltvExpiry(800_000), payload.expiry)
+            assertEquals(pathId, payload.pathId)
+        }
+    }
+
+    // See bolt04/trampoline-to-blinded-path-payment-onion-test.json
+    @Test
+    fun `send a trampoline payment to blinded recipient -- reference test vector`() {
+        val preimage = ByteVector32.fromValidHex("8bb624f63457695115152f4bf9950bbd14972a5f49d882cb1a68aa064742c057")
+        val paymentHash = Crypto.sha256(preimage).byteVector32()
+        val alicePayerKey = PrivateKey.fromHex("40086168e170767e1c2587d503fea0eaa66ef21069c5858ec6e532503d6a4bd6")
+        // Eve creates a blinded path to herself going through Dave and advertises that she supports MPP and trampoline.
+        val offerFeatures = Features(Feature.BasicMultiPartPayment to FeatureSupport.Optional, Feature.TrampolinePayment to FeatureSupport.Optional)
+        val (path, pathId) = run {
+            val evePriv = PrivateKey.fromHex("4545454545454545454545454545454545454545454545454545454545454545")
+            val eve = evePriv.publicKey()
+            val dave = PublicKey.fromHex("032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991")
+            val offer = OfferTypes.Offer.createNonBlindedOffer(null, "bolt12", eve, offerFeatures, Block.RegtestGenesisBlock.hash)
+            val paymentMetadata = OfferPaymentMetadata.V1(offer.offerId, 150_000_000.msat, preimage, alicePayerKey.publicKey(), "hello", 1, 0)
+            val blindedPayloadEve = RouteBlindingEncryptedData(TlvStream(RouteBlindingEncryptedDataTlv.PathId(paymentMetadata.toPathId(evePriv))))
+            val blindedPayloadDave = RouteBlindingEncryptedData(
+                TlvStream(
+                    RouteBlindingEncryptedDataTlv.OutgoingNodeId(EncodedNodeId(eve)),
+                    RouteBlindingEncryptedDataTlv.PaymentRelay(CltvExpiryDelta(36), 1000, 500.msat),
+                    RouteBlindingEncryptedDataTlv.PaymentConstraints(CltvExpiry(850_000), 1.msat),
+                )
+            )
+            assertContentEquals(
+                Hex.decode("042102edabbd16b41c8371b92ef2f04c1185b4f03b6dcd52ba9b78d9d7c89c8f221145 0a080024000003e801f4 0c05000cf85001"),
+                blindedPayloadDave.write(),
+            )
+            assertContentEquals(
+                Hex.decode("06 bf 01caa1dcc994683479a217fb32ac30e9c2b6f7960121ca169ae732477e10349b560000000008f0d1808bb624f63457695115152f4bf9950bbd14972a5f49d882cb1a68aa064742c05702414343fd4a723942a86d5f60d2cfecb6c5e8a65595c9995332ec2dba8fe004a20000000000000001000000000000000068656c6c6f188d0b54e9a7df32f0e00c62ace869bac50e0e9c77bcf4c9850bae33d5e48ada65267a3d56111e3c3d84366f3cd53d998256929b0440355dff20455396fe6aac"),
+                blindedPayloadEve.write(),
+            )
+            val sessionKey = PrivateKey.fromHex("090a684b173ac8da6716859095a779208943cf88680c38c249d3e8831e2caf7e")
+            val blindedRouteDetails = RouteBlinding.create(sessionKey, listOf(dave, eve), listOf(blindedPayloadDave, blindedPayloadEve).map { it.write().byteVector() })
+            assertEquals(EncodedNodeId(dave), blindedRouteDetails.route.firstNodeId)
+            assertEquals(PublicKey.fromHex("02c952268f1501cf108839f4f5d0fbb41a97de778a6ead8caf161c569bd4df1ad7"), blindedRouteDetails.lastPathKey)
+            assertEquals(PublicKey.fromHex("02988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e"), blindedRouteDetails.route.firstPathKey)
+            val blindedNodes = listOf(
+                PublicKey.fromHex("0295d40514096a8be54859e7dfe947b376eaafea8afe5cb4eb2c13ff857ed0b4be"),
+                PublicKey.fromHex("020e2dbadcc2005e859819ddebbe88a834ae8a6d2b049233c07335f15cd1dc5f22"),
+            )
+            assertEquals(blindedNodes, blindedRouteDetails.route.blindedNodeIds)
+            val encryptedPayloads = listOf(
+                ByteVector("0ccf3c8a58deaa603f657ee2a5ed9d604eb5c8ca1e5f801989afa8f3ea6d789bbdde2c7e7a1ef9ca8c38d2c54760febad8446d3f273ddb537569ef56613846ccd3aba78a"),
+                ByteVector("bcd747394fbd4d99588da075a623316e15a576df5bc785cccc7cd6ec7b398acce6faf520175f9ec920f2ef261cdb83dc28cc3a0eeb970107b3306489bf771ef5b1213bca811d345285405861d08a655b6c237fa247a8b4491beee20c878a60e9816492026d8feb9dafa84585b253978db6a0aa2945df5ef445c61e801fb82f43d5f00716baf9fc9b3de50bc22950a36bda8fc27bfb1242e5860c7e687438d4133e058770361a19b6c271a2a07788d34dccc27e39b9829b061a4d960eac4a2c2b0f4de506c24f9af3868c0aff6dda27281c"),
+            )
+            assertEquals(encryptedPayloads, blindedRouteDetails.route.encryptedPayloads)
+            val paymentInfo = OfferTypes.PaymentInfo(500.msat, 1000, CltvExpiryDelta(36), 1.msat, 500_000_000.msat, Features.empty)
+            val path = Bolt12Invoice.Companion.PaymentBlindedContactInfo(OfferTypes.ContactInfo.BlindedPath(blindedRouteDetails.route), paymentInfo)
+            Pair(path, blindedPayloadEve.pathId)
+        }
+        // Alice creates a trampoline onion using Eve's blinded path and starting at Carol (Carol -> Dave -> Eve).
+        val trampolineOnion = run {
+            val carol = PublicKey.fromHex("027f31ebc5462c1fdce1b737ecff52d37d75dea43ce11c74d25aa297165faa2007")
+            val dave = PublicKey.fromHex("032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991")
+            assertEquals(EncodedNodeId(dave), path.route.route.firstNodeId)
+            assertEquals(PublicKey.fromHex("020e2dbadcc2005e859819ddebbe88a834ae8a6d2b049233c07335f15cd1dc5f22"), path.route.nodeId)
+            val payloadEve = PaymentOnion.FinalPayload.Blinded.create(150_000_000.msat, CltvExpiry(800_000), path.route.route.encryptedPayloads.last(), pathKey = null)
+            assertContentEquals(
+                Hex.decode("e4 020408f0d180 04030c3500 0ad1bcd747394fbd4d99588da075a623316e15a576df5bc785cccc7cd6ec7b398acce6faf520175f9ec920f2ef261cdb83dc28cc3a0eeb970107b3306489bf771ef5b1213bca811d345285405861d08a655b6c237fa247a8b4491beee20c878a60e9816492026d8feb9dafa84585b253978db6a0aa2945df5ef445c61e801fb82f43d5f00716baf9fc9b3de50bc22950a36bda8fc27bfb1242e5860c7e687438d4133e058770361a19b6c271a2a07788d34dccc27e39b9829b061a4d960eac4a2c2b0f4de506c24f9af3868c0aff6dda27281c 120408f0d180"),
+                payloadEve.write(),
+            )
+            val payloadDave = PaymentOnion.BlindedChannelRelayPayload.create(path.route.route.encryptedPayloads.first(), path.route.route.firstPathKey)
+            assertContentEquals(
+                Hex.decode("69 0a440ccf3c8a58deaa603f657ee2a5ed9d604eb5c8ca1e5f801989afa8f3ea6d789bbdde2c7e7a1ef9ca8c38d2c54760febad8446d3f273ddb537569ef56613846ccd3aba78a 0c2102988face71e92c345a068f740191fd8e53be14f0bb957ef730d3c5f76087b960e"),
+                payloadDave.write(),
+            )
+            val payloadCarol = PaymentOnion.NodeRelayPayload.create(150_150_500.msat, CltvExpiry(800_036), dave)
+            assertContentEquals(
+                Hex.decode("2e 020408f31d64 04030c3524 0e21032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991"),
+                payloadCarol.write(),
+            )
+            val sessionKey = PrivateKey.fromHex("a64feb81abd58e473df290e9e1c07dc3e56114495cadf33191f44ba5448ebe99")
+            OutgoingPaymentPacket.buildOnion(sessionKey, listOf(carol, dave, path.route.nodeId), listOf(payloadCarol, payloadDave, payloadEve), paymentHash).packet
+        }
+        assertEquals(
+            "0002bc59a9abc893d75a8d4f56a6572f9a3507323a8de22abe0496ea8d37da166a8b4bba0e560f1a9deb602bfd98fe9167141d0b61d669df90c0149096d505b85d3d02806e6c12caeb308b878b6bc7f1b15839c038a6443cd3bec3a94c2293165375555f6d7720862b525930f41fddcc02260d197abd93fb58e60835fd97d9dc14e7979c12f59df08517b02e3e4d50e1817de4271df66d522c4e9675df71c635c4176a8381bc22b342ff4e9031cede87f74cc039fca74aa0a3786bc1db2e158a9a520ecb99667ef9a6bbfaf5f0e06f81c27ca48134ba2103229145937c5dc7b8ecc5201d6aeb592e78faa3c05d3a035df77628f0be9b1af3ef7d386dd5cc87b20778f47ebd40dbfcf12b9071c5d7112ab84c3e0c5c14867e684d09a18bc93ac47d73b7343e3403ef6e3b70366835988920e7d772c3719d3596e53c29c4017cb6938421a557ce81b4bb26701c25bf622d4c69f1359dc85857a375c5c74987a4d3152f66987001c68a50c4bf9e0b1dab4ad1a64b0535319bbf6c4fbe4f9c50cb65f5ef887bfb91b0a57c0f86ba3d91cbeea1607fb0c12c6c75d03bbb0d3a3019c40597027f5eebca23083e50ec79d41b1152131853525bf3fc13fb0be62c2e3ce733f59671eee5c4064863fb92ae74be9ca68b9c716f9519fd268478ee27d91d466b0de51404de3226b74217d28250ead9d2c95411e0230570f547d4cc7c1d589791623131aa73965dccc5aa17ec12b442215ce5d346df664d799190df5dd04a13",
+            Hex.encode(OnionRoutingPacketSerializer(trampolineOnion.payload.size()).write(trampolineOnion)),
+        )
+        // Alice creates a payment onion for Carol (Alice -> Bob -> Carol).
+        val onionForBob = run {
+            val sessionKey = PrivateKey.fromHex("4f777e8dac16e6dfe333066d9efb014f7a51d11762ff76eca4d3a95ada99ba3e")
+            val bob = PublicKey.fromHex("0324653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c")
+            val carol = PublicKey.fromHex("027f31ebc5462c1fdce1b737ecff52d37d75dea43ce11c74d25aa297165faa2007")
+            val paymentSecret = ByteVector32("7494b65bc092b48a75465e43e29be807eb2cc535ce8aaba31012b8ff1ceac5da")
+            val payloadBob = PaymentOnion.ChannelRelayPayload.create(ShortChannelId("572330x42x2821"), 150_153_000.msat, CltvExpiry(800_060))
+            assertContentEquals(
+                Hex.decode("15 020408f32728 04030c353c 060808bbaa00002a0b05"),
+                payloadBob.write(),
+            )
+            val payloadCarol = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(150_153_000.msat, 150_153_000.msat, CltvExpiry(800_060), paymentSecret, trampolineOnion)
+            assertContentEquals(
+                Hex.decode(
+                    "fd0255 020408f32728 04030c353c 08247494b65bc092b48a75465e43e29be807eb2cc535ce8aaba31012b8ff1ceac5da08f32728 14fd02200002bc59a9abc893d75a8d4f56a6572f9a3507323a8de22abe0496ea8d37da166a8b4bba0e560f1a9deb602bfd98fe9167141d0b61d669df90c0149096d505b85d3d02806e6c12caeb308b878b6bc7f1b15839c038a6443cd3bec3a94c2293165375555f6d7720862b525930f41fddcc02260d197abd93fb58e60835fd97d9dc14e7979c12f59df08517b02e3e4d50e1817de4271df66d522c4e9675df71c635c4176a8381bc22b342ff4e9031cede87f74cc039fca74aa0a3786bc1db2e158a9a520ecb99667ef9a6bbfaf5f0e06f81c27ca48134ba2103229145937c5dc7b8ecc5201d6aeb592e78faa3c05d3a035df77628f0be9b1af3ef7d386dd5cc87b20778f47ebd40dbfcf12b9071c5d7112ab84c3e0c5c14867e684d09a18bc93ac47d73b7343e3403ef6e3b70366835988920e7d772c3719d3596e53c29c4017cb6938421a557ce81b4bb26701c25bf622d4c69f1359dc85857a375c5c74987a4d3152f66987001c68a50c4bf9e0b1dab4ad1a64b0535319bbf6c4fbe4f9c50cb65f5ef887bfb91b0a57c0f86ba3d91cbeea1607fb0c12c6c75d03bbb0d3a3019c40597027f5eebca23083e50ec79d41b1152131853525bf3fc13fb0be62c2e3ce733f59671eee5c4064863fb92ae74be9ca68b9c716f9519fd268478ee27d91d466b0de51404de3226b74217d28250ead9d2c95411e0230570f547d4cc7c1d589791623131aa73965dccc5aa17ec12b442215ce5d346df664d799190df5dd04a13"
+                ),
+                payloadCarol.write(),
+            )
+            OutgoingPaymentPacket.buildOnion(sessionKey, listOf(bob, carol), listOf(payloadBob, payloadCarol), paymentHash, OnionRoutingPacket.PaymentPacketLength).packet
+        }
+        assertEquals(
+            "00025fd60556c134ae97e4baedba220a644037754ee67c54fd05e93bf40c17cbb73362fb9dee96001ff229945595b6edb59437a6bc143406d3f90f749892a84d8d430c6890437d26d5bfc599d565316ef51347521075bbab87c59c57bcf20af7e63d7192b46cf171e4f73cb11f9f603915389105d91ad630224bea95d735e3988add1e24b5bf28f1d7128db64284d90a839ba340d088c74b1fb1bd21136b1809428ec5399c8649e9bdf92d2dcfc694deae5046fa5b2bdf646847aaad73f5e95275763091c90e71031cae1f9a770fdea559642c9c02f424a2a28163dd0957e3874bd28a97bec67d18c0321b0e68bc804aa8345b17cb626e2348ca06c8312a167c989521056b0f25c55559d446507d6c491d50605cb79fa87929ce64b0a9860926eeaec2c431d926a1cadb9a1186e4061cb01671a122fc1f57602cbef06d6c194ec4b715c2e3dd4120baca3172cd81900b49fef857fb6d6afd24c983b608108b0a5ac0c1c6c52011f23b8778059ffadd1bb7cd06e2525417365f485a7fd1d4a9ba3818ede7cdc9e71afee8532252d08e2531ca52538655b7e8d912f7ec6d37bbcce8d7ec690709dbf9321e92c565b78e7fe2c22edf23e0902153d1ca15a112ad32fb19695ec65ce11ddf670da7915f05ad4b86c154fb908cb567315d1124f303f75fa075ebde8ef7bb12e27737ad9e4924439097338ea6d7a6fc3721b88c9b830a34e8d55f4c582b74a3895cc848fe57f4fe29f115dabeb6b3175be15d94408ed6771109cfaf57067ae658201082eae7605d26b1449af4425ae8e8f58cdda5c6265f1fd7a386fc6cea3074e4f25b909b96175883676f7610a00fdf34df9eb6c7b9a4ae89b839c69fd1f285e38cdceb634d782cc6d81179759bc9fd47d7fd060470d0b048287764c6837963274e708314f017ac7dc26d0554d59bfcfd3136225798f65f0b0fea337c6b256ebbb63a90b994c0ab93fd8b1d6bd4c74aebe535d6110014cd3d525394027dfe8faa98b4e9b2bee7949eb1961f1b026791092f84deea63afab66603dbe9b6365a102a1fef2f6b9744bc1bb091a8da9130d34d4d39f25dbad191649cfb67e10246364b7ce0c6ec072f9690cabb459d9fda0c849e17535de4357e9907270c75953fca3c845bb613926ecf73205219c7057a4b6bb244c184362bb4e2f24279dc4e60b94a5b1ec11c34081a628428ba5646c995b9558821053ba9c84a05afbf00dabd60223723096516d2f5668f3ec7e11612b01eb7a3a0506189a2272b88e89807943adb34291a17f6cb5516ffd6f945a1c42a524b21f096d66f350b1dad4db455741ae3d0e023309fbda5ef55fb0dc74f3297041448b2be76c525141963934c6afc53d263fb7836626df502d7c2ee9e79cbbd87afd84bbb8dfbf45248af3cd61ad5fac827e7683ca4f91dfad507a8eb9c17b2c9ac5ec051fe645a4a6cb37136f6f19b611e0ea8da7960af2d779507e55f57305bc74b7568928c5dd5132990fe54c22117df91c257d8c7b61935a018a28c1c3b17bab8e4294fa699161ec21123c9fc4e71079df31f300c2822e1246561e04765d3aab333eafd026c7431ac7616debb0e022746f4538e1c6348b600c988eeb2d051fc60c468dca260a84c79ab3ab8342dc345a764672848ea234e17332bc124799daf7c5fcb2e2358514a7461357e1c19c802c5ee32deccf1776885dd825bedd5f781d459984370a6b7ae885d4483a76ddb19b30f47ed47cd56aa5a079a89793dbcad461c59f2e002067ac98dd5a534e525c9c46c2af730741bf1f8629357ec0bfc0bc9ecb31af96777e507648ff4260dc3673716e098d9111dfd245f1d7c55a6de340deb8bd7a053e5d62d760f184dc70ca8fa255b9023b9b9aedfb6e419a5b5951ba0f83b603793830ee68d442d7b88ee1bbf6bbd1bcd6f68cc1af",
+            Hex.encode(OnionRoutingPacketSerializer(OnionRoutingPacket.PaymentPacketLength).write(onionForBob)),
+        )
+        // Bob decrypts the onion and relays to Carol.
+        val onionForCarol = run {
+            val bobPriv = PrivateKey.fromHex("4242424242424242424242424242424242424242424242424242424242424242")
+            val add = UpdateAddHtlc(randomBytes32(), 1, 150_155_000.msat, paymentHash, CltvExpiry(800_100), onionForBob)
+            val (payload, onion) = decryptChannelRelay(add, bobPriv)
+            assertEquals(ShortChannelId("572330x42x2821"), payload.outgoingChannelId)
+            assertEquals(150_153_000.msat, payload.amountToForward)
+            assertEquals(CltvExpiry(800_060), payload.outgoingCltv)
+            onion
+        }
+        assertEquals(
+            "0003dc6a4c9b34bdcd2191fc4dacfc1aeb20f71991acbd17847b9ab17d69579c1614da1276d18820e55534d7352839caa436aa79a6d5be26c6ecbd1c79f74442b1b7bf8ed8b739b736b9248769c2c422eebc85fb0d580e9561b1cda1be3fd4cfa6ed0d839a2feb878acf686b112febaae9c1494a2ad20d97b2d2f7e59d6d296a104ba1b29e5d06d7a7d0279e627c51d6eed9c6a56bdbde81b22dc92e07e151546fc9568d4b27d0a1e217c3caf42e8f6e629829ee76e2a077fd1eb38dcce22217458c529cc7a9df4adc507ead08b267a722cb6b06cfa3d2a35b6387f878fd7b18e6debe7c2ff03603687adfc654606756b2c609a891956a9f4c2918d625632833ca371fe605da31a10044393c240bf4db8a1e413da7f8a6ea9dc80b0031e0dc43c1f5922ca5003e87f405ef73fc492bc813962192e3c4c4801c0f03baab2e0aba3a6cd101f8d09de15c027bff835beacc5ba09420323f4d5f75e6818939fbe02cb2aaa3e6651d512eee37ded2f27406974a3fedf77c8364beb2ce60d869b0de5ce33c466406b45e5791e189f0795c623d786d794c3d9b927b9fb7fde99df2b4359da128496ceb1a336049f05f06937c45d0fd90f10f7654ea4bb5734d5a9a3e0b2ace8ac771494a6e442fedd2314772e761704ad16f8aa9a16832b30987535c43963e880acda194119407de24fcf23558596a2848d6c98430f504e9281127b2bf649a25c6c1d35783d509f17fec8c2c0ee4004778d66822db24f01bc3361454efb60cde453c6cfe33f2f0177a3b0e326a077a0d8c433f8a21613fb62ceb2f314aa69f81b7756e76ac9f6c6dcfdace9a320e1afc738b223d192fcbc0adf5cd84f4cc161abe0455c26cdaa1270b2823fedbe7ee982ca5af8c8b8bec0ba90c3bb65a8e1ee89cc6c44114d658fb89985c7ca8e8eeb32bcf3fedae62330eff3da9654fda0a58281480d4be76c916889b2db9210e3a66c9ccaa3f06232150d5d96cbf6c18916d603e1495ab6f17baacb5005ed5ec17864c2da1bb400e6e68975cc84325e18215a6052313c3c75e25163648c840506916c2d845760063d6a4385df4f54bd0ec5da029b837202e45e399d1ee794160f49cd6d0149457d3efc2537e2ec36ce6a02727a5104d6f37fd612fec4e96f169f4f7d66706ea7d9ba344bef8e2e57664bde30f26249664bdc3eeb1dfa88a9f33e6d790581b67d57c30255d43624751f269da3f98df459a6bafe6e37d62be589eb938d8d223c7e80038a8dae2313126822fe16771a6ab6598d15bc350ddd76180e0963b5765834365254c611e2de46bde204a0377e13dab44afdacf5d77465dc035ca1ff70603f5887a023cca650ab9e3b4244f3a1870bb07b2556e3bcd47fafa3adec659aee17a881310c208b2d696dc14fbdd2209d89e7e61bbee19263ea98eb994eef0dc97e2ae0e56a6fc9592f9e27de5a22d749c9dbed19f2b2b8602ff890e82fedbdb41e019fbaf74256d6bcaf31538fff1329ed30b4b7bd991e9f1b5c6ef4f119387fcb7875f4f21f2d39b0ad01500201da644158e1260a58b4bcd1712ca3bc6e093951424452197b4fb3ac2aaf16e70fcedddd9fa96fcf46c2d60cb40a64c807fffb2448672c5bb2afce2205fa1d356d4cdb907a25b82c27e4fb735375c1f532fbbdd43c415a27e603cf15ff7f00f1ac96f346c2dcc00ffeb682db175b912cb5356f7528a834fe84df2df7453e34dd01008a087e799c18656eefe3038a03c71803bbc0990cd50f4a413329e6f779107d57158e78886728a9fa039c385abc92e230179051a02727402e7a613364b48cd93b6a26cb6888d5c4cc1d3c6a39cb442c2de12bb1ad396205c9a10023d7edc951fc60a28813867f635c3d74d4206f398849e94750b98ba43c5faca8502bf46929e3c0debfac32fc4e4a09c2436a0590cd53c",
+            Hex.encode(OnionRoutingPacketSerializer(OnionRoutingPacket.PaymentPacketLength).write(onionForCarol)),
+        )
+        // Carol decrypts the onion and relays to Dave, without knowing that a blinded path starts at Dave.
+        val onionForDave = run {
+            val carolPriv = PrivateKey.fromHex("4343434343434343434343434343434343434343434343434343434343434343")
+            val dave = PublicKey.fromHex("032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991")
+            val add = UpdateAddHtlc(randomBytes32(), 1, 150_153_000.msat, paymentHash, CltvExpiry(800_060), onionForCarol)
+            val (payload, trampolinePayload, trampolineOnionForDave) = decryptRelayToTrampoline(add, carolPriv)
+            assertEquals(150_153_000.msat, payload.amount)
+            assertEquals(CltvExpiry(800_060), payload.expiry)
+            assertEquals(ByteVector32("7494b65bc092b48a75465e43e29be807eb2cc535ce8aaba31012b8ff1ceac5da"), payload.paymentSecret)
+            assertEquals(150_150_500.msat, trampolinePayload.amountToForward)
+            assertEquals(CltvExpiry(800_036), trampolinePayload.outgoingCltv)
+            assertEquals(dave, trampolinePayload.outgoingNodeId)
+            val sessionKey = PrivateKey.fromHex("e4acea94d5ddce1a557229bc39f8953ec1398171f9c2c6bb97d20152933be4c4")
+            val paymentSecret = ByteVector32("d1818c04937ace92037fc46e57bafbfc7ec09521bf49ff1564b10832633c2a93")
+            val payloadDave = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(150_150_500.msat, 150_150_500.msat, CltvExpiry(800_036), paymentSecret, trampolineOnionForDave)
+            assertContentEquals(
+                Hex.decode("fd0255 020408f31d64 04030c3524 0824d1818c04937ace92037fc46e57bafbfc7ec09521bf49ff1564b10832633c2a9308f31d64 14fd02200003868a4ec9883bc8332dcd63bafc80086fe046bf2795c070445381f98f5b4678efc8c102fee084102c1ffb91cae87bbbdce3ef59e68af26deae97af39879713b71df2c31e56acbddf7cc8f85214162785839e981a3abb51749d7cab6e09956a7e384fa658323e144293c7328f6f9097705b05eed2f11107cafdf4f6f6de7a53512e192276386c83f91809462f8f2737b8729d35ce145999770edae36808757db3aa3e77dbd8dc517fb0437e2660b16ef728fbcadf7d7f3cb4395924d1bb50a14ce8ba68635e73a7fa3d55f2a9fa796635a8a1dc6c1a3b72c491d4b1fd5fe642e6decb93d28223e79e4a69ffe71bc6e595b949e4071a2ffa65bd9099d6af7bf7f26065f032969ce33b78195cc741e2c97f801311368aee7e75159de00f6dc2b0b2b2e77c583ce8fe4ae61b774491dfefacc2aa3dfb99d6d00689a344def2086405caa2e2dc2126dc7b47750f3393f492c8b5c96bcd609e1c56a2d713ec9f6c0618a33ddfb20f2f3cbe355424292de47b6374bc012390a433e02f31cfa8a9817bf6a5597ac42b063e1cf3aaf6666b5d420600c8fc8ce689678bd802ac3815f9aaf6a48d0d3a7f940f621bd74d3e738b40c4c67f5b54b258e57d15584cf84ee2ad61c8a1fabb0e035fdb67f92f54f14797fd20bddee25d3a1ea9982757778c311f77dba90013d37780535acc4ef2281ebabf1736cb188fe7f08dc861d61a4135f295d85eb02e3a8f0015c6bcd206c7b5162f0696c1d69a06e42918dbe8fd9affb"),
+                payloadDave.write(),
+            )
+            OutgoingPaymentPacket.buildOnion(sessionKey, listOf(dave), listOf(payloadDave), paymentHash, OnionRoutingPacket.PaymentPacketLength).packet
+        }
+        assertEquals(
+            "0003626d5fa7ed0b8706f975ca58ae2c645889514153568aaab7835325ecd3739a57cd1f65ed63fff058e29e81f660c134ea43937b9d93fb0caf3846b176734c292b7c7fd7a576391e63c0fe0023bdeabcc9971f4a44db079bf8203b0a52ec47c86653207ea6596c8d029793acd2327ff788dcf8a9ee424c2aa7798c95ce53fae6c9be85a0d276ff20c814c26f6e4f19a2152ffbd931a9d054976cafe556b00365ef54edc9a3f8021c73f17884ef209be13e7710df3b93efa8edd2b4eda306766f6dabb517ed720076cc3e7395373dc81e018f347109bcbc0265f0d5098489f83212a2e5c1583c8411dea509a17735713e8cc66d4a89cd56d0a35e0d3f59553b6b017eb5c9b6dcd724ca79c0d4aa5706a34503895655d2fc186ec772a17ba46e8961c37c61fe173f448d83efd1c6f78ce5f64fdfa352c8ab1c7d3aeddeeacc409a92fe87f86a07cfec33c5a7a2f3834d8dfba1291bed88271cb13c210fbfb1ced93440bee260f6335044a95d7aaa14bed06e1d3b9ec7c82db822543ffa4eff34e88a715ff8f8a23017982c6ae882ee18e0bdabba6f7d0e4285d034a2fd2a903b9ccfce534f9fba5acdc91f91d723ae359b9c2823b7e24dd2ee8d7ca3f6384976f5d319172785c948964426332c811682a643ce8c9575431e84c9af7fcf0dfdcdc67bc3e0b2415719e5a0da868dafef91be595c280bdb67e1d586c184c71617bddddfc653f4a1083658a96fe86cfa0eb93f9182fddccbb64f9e9e2b8f0c4b6edeb2aa81f3e16a24ffce789d183e0fa3689e437a1180b44dac0a5bb3bacd1ab0dab53c55194419c0e194f31ca683cf7c9b3ef304ff19dd490a6ad80233c1855b680f34e0eb2d252689ad5cd1750a793529a83b194e7d410f6cf027ae78f94b5d0405feeef397e272050d27581bb996eab562cd71d6aec3e4a793b93c950dcbadeb1d8cef4e9b5a466a06f1051f0eab1d08896c3eeb20d55118dec43ac5dcb8e90e1e3bcb4a67c419c4d825111ff450a6241b31087ef70f2112da8940a834441f2e0f7883eed5ef2dd09d57c23eec75ccf443ac02197f2f6cbf8c47fd8753cca90e1375c2c04dc985500f3fe147f72121bc1020f430fb199161897d38765bf0480e8d0505cb09eb6cefc842eb93edbf7d7a99c1f9f7f09db3e6dd3e5116f29d1b1497f940fc341b6ed90f187c68a14b00a845303a248187f7699ab9ebb0e6c9355ade7772703faa4380cfd88c9600f2147747b402d3621d2410f3a6c60367b3bed950186f966db77c58d83bb29305748b8fbf6da1e8d3d1d7251ce0812170e999fa35128cada2ff53d7cb42f37ebc3e758c6f571eb3c8e94f3535d422ebd1b11788c9ac75292d15b759a612250c97efa01fa869187cf8cdadf95ebccafa18ca9b40076828d459d7a295528fd3c77c5f3978d7fa6244466a056ebdf59902907b13bd6255904aee68cbbb46a81ce1f5cd541a3935a2229d0501f1c272624157501841eaaf6703b6b40a12a010e68bb563e2794ed7d3976ff9b59bb1f6719b6d06a0cd3d561bdcd0b2761ccbec1c4decb2faf13065ba05f633d114cdf8d61fd33c3d6f149319adc4b0367df11b77c92c75a57de20bb8775d0582be511e6139b27bea77e60e7180ba292a94944f87a91a20cabc8346ccde196e74b5bfde5a613ea5536292971cd3737980efac61d8189926b14cc1f5ea553b0f41afc2c3f6bc7d19f078cff09b2181d1b9dd068ac8a8116dd96a418c1e24f7cf22c54f7dd7c40812b7e36805d7adccbf5c8a703e3891c05caf6b4434192940ea2f164d0ae84355d1a33859d45107abcd41598da0afa4fe5f8c5a3ecb9b4857ac0e736fc76b4f51325391530a645618656a3dae74cba34a34bb7a3c0e9523f6db6b31694e8ceb9c67ae658af7db5a4c8de9e8322c3172fed09f27aa4420ae9a0a",
+            Hex.encode(OnionRoutingPacketSerializer(OnionRoutingPacket.PaymentPacketLength).write(onionForDave)),
+        )
+        // Dave decrypts the onion and blinded path data and relays to Eve.
+        val onionForEve = run {
+            val davePriv = PrivateKey.fromHex("4444444444444444444444444444444444444444444444444444444444444444")
+            val eve = PublicKey.fromHex("02edabbd16b41c8371b92ef2f04c1185b4f03b6dcd52ba9b78d9d7c89c8f221145")
+            val add = UpdateAddHtlc(randomBytes32(), 3, 150_150_500.msat, paymentHash, CltvExpiry(800_036), onionForDave)
+            val (payload, innerPayload, trampolineOnionForEve) = decryptRelayToBlindedTrampoline(add, davePriv)
+            // Dave decrypts the blinded path data.
+            val encryptedData = innerPayload.records.get<OnionPaymentPayloadTlv.EncryptedRecipientData>()?.data
+            assertNotNull(encryptedData)
+            val pathKey = innerPayload.records.get<OnionPaymentPayloadTlv.PathKey>()?.publicKey
+            assertNotNull(pathKey)
+            val (encryptedPayload, nextPathKey) = RouteBlinding.decryptPayload(davePriv, pathKey, encryptedData).right!!
+            val decryptedPayload = RouteBlindingEncryptedData.read(encryptedPayload.toByteArray()).right!!
+            assertEquals(150_150_500.msat, payload.amount)
+            assertEquals(CltvExpiry(800_036), payload.expiry)
+            assertEquals(ByteVector32("d1818c04937ace92037fc46e57bafbfc7ec09521bf49ff1564b10832633c2a93"), payload.paymentSecret)
+            assertEquals(EncodedNodeId(eve), decryptedPayload.nextNodeId)
+            val paymentRelay = decryptedPayload.records.get<RouteBlindingEncryptedDataTlv.PaymentRelay>()
+            assertEquals(CltvExpiryDelta(36), paymentRelay?.cltvExpiryDelta)
+            assertEquals(500.msat, paymentRelay?.feeBase)
+            assertEquals(1000, paymentRelay?.feeProportionalMillionths)
+            val sessionKey = PrivateKey.fromHex("cfeb31c76b7b6905be8da966ce2d9a87e3abbb03d236d7346c2852862c87a4b8")
+            val paymentSecret = ByteVector32("1221f15a9dece128347dac673d6171be13b3d92c9c77ff581506507045a1d2e8")
+            val payloadEve = PaymentOnion.FinalPayload.Standard(
+                TlvStream(
+                    OnionPaymentPayloadTlv.AmountToForward(150_000_000.msat),
+                    OnionPaymentPayloadTlv.OutgoingCltv(CltvExpiry(800_000)),
+                    OnionPaymentPayloadTlv.PaymentData(paymentSecret, 150_000_000.msat),
+                    OnionPaymentPayloadTlv.PathKey(nextPathKey),
+                    OnionPaymentPayloadTlv.TrampolineOnion(trampolineOnionForEve)
+                )
+            )
+            assertContentEquals(
+                Hex.decode("fd0278 020408f0d180 04030c3500 08241221f15a9dece128347dac673d6171be13b3d92c9c77ff581506507045a1d2e808f0d180 0c2102c952268f1501cf108839f4f5d0fbb41a97de778a6ead8caf161c569bd4df1ad7 14fd022000038da50a45c30a086668ad1c34a23c11ee94bf0b4e7b8b8b184b7914645aef9e1ecf8f95df787c87965210644a84d1da8baf1731a02d0a292ae9c6e685a36e0e1679a8e0c38c27de47014966aaacfea446571ddaf7afcff7c3517e7bf57f87388720a1f226cc9ba1f670396435163a6872d39d2460adafdefb355bc5a89d51e62d427aac45e40b18d2b34587ca19753a8a0a7d704e38c190034b0c5b253bd566e20845a22e81d2d6a74071dfdfefe6fceb555f3d52a7f7d6b99e8e74a6cf4893f7374b473e28e62c9d99fc386ed220dd0ecc50274883d9f6a63e4aabdc1d6604827367dd3b3ddf233c2a8a7d577bf75736ca77c5d7d43f85db51c7cc6e33513225428e525ac0c22f6ef6c509e4ebbe4074f1fb726a8fd1e8643893e9fa38ae1eb6fd761e7fb12db8d3f20b5b26483b3fb92e6eb9fabd647870ddc39d61de48bdc39ce26eedf2f4d8da60adc13876844ddda3cc902792a8bd113980011279cddc625b9bcda8b0cc91cacaa4061d565a0b6e5daecf21ef3ce1be4d195c28ddc7337754e1d58908c4d8ffb45d0fbe936b83beb9851b88e57026c80e3e6d7b5b984785b4dd67498f86a9afcfc0548837b87ce07ef524696b68dc5a42312588dd051ea608f46dec1613c558e11d64e32c5cfd6b0e1c93691c724b257033d93dc7fffebca7f494d2b6391492985eac16d6919dcf60f1ab49e6ae216c90776b48ace0404128313220af7b6e546d1b89ab356cab83059301ae2d3a0eff524a610649c8"),
+                payloadEve.write(),
+            )
+            OutgoingPaymentPacket.buildOnion(sessionKey, listOf(eve), listOf(payloadEve), paymentHash, OnionRoutingPacket.PaymentPacketLength).packet
+        }
+        assertEquals(
+            "000318a5a814e6e22fa5e938e671528091a27ff4883b81353560bb24d65cf9c245e880d563cfd8717f5ffae349d5ebc982b674d752a867e515855af157e325294ce929e8a5418faa5c2c7913f9440d4aba5087aee5e1499f239b392fac71a935636b3bbf6146aaa995db6e090c3216191f5c0662796277854c618bfadac769cacf34c89e05435b0f739f505f8b1020055497bdfafd88cd35d35ad2e0657aadfa8cc47647ccadae9dde5ddedd4e2b3d9c90074406449bf51e22fcae388bab417573e3f104a80913305bc1f3078e2badb8cf519b77ebd5433d5d12ccb9ff420ae6451b1368fa648213fc831b456a700fcd88a387c5cdf1816b9a88dd696ee2bc9035cf19998740813b50ae131920a2879026fbdda8caea065950ee3288e875d9001b80c0f915d8ef3666473f8a1a2233ffb349a8b5d292cef9011deada08d839ca2a2b0f4910edb68d6ae4d3ee08ef97143aee5a6afcac6036d5be5bac5591ce46dd645438340839fff8e7e7ad6ec20bca4335ef8dab6e0e1ddf861352e33bb63c6d5a3531a68abd0b185d0ebe1545cb10b0ef4461068b3e8e95a549ac9756ce44653593bb198241e4169c3f419c3f0903d36220ad849323495606366e1adb3dc7db0ac6cbe7a43f2f954534d1eb4d8f617369e7ea4f281bcac1f8ff7e13625f6518d4e255f3695528afa24cc237ba69c4452b0645b95ff6465cab30ca6afd21f1957f331df501c997f2eb17e6e3c17619dc40671d29f68ab4844926c1d513c3a1209c8da2e9b4bac4c740ae3bc6953f1afa406c6b5999a9e2d72e41073171246fd66f52397c83cb9027e59f0d940b01596f5c631e43fdb5b320142c0e595383e39d0a333535b0c6ff9b9f8d3f892797c992e582a60f974788ffcaf252c691c550c56e9d43b6ca0278da91ef8b84eaf640d4551b7cc94c1b78968d3df85798fef2382353854ebba9c11da5d541535e2aca9d4adcc60fe9b978b9b096e35e3ffb7f740fc27721dab063db98100d581259f20a79fe66629fbe92c3576dfef5f8e23724bd68689553c88065ac19af4cabd19a6e7566278d212407884cd294947973acfb872788e6f7c2372410db55b1d6d7713c639957e2161dfd35c487ec706290e85a0bd0f12ac7f20c1cbfc12e1d13049d105d421a260b1b095c161df77f00eb74fc451c1bc3fee1ba6bb5ac0236ae249f11ee5f7b21e3e41c84fc423c9692f60a2cb4ad707757104b058033e57c3b23a6ef920a2a14efd1c39171c3085cb4f7f27fe93b6b8cd374d92b615406ca2b3dfa860dcebc22fb55a2c8a92e706d84798bf4268656c8ffd10436897b2f26ad4e7389915d7c10f82d20075a02eb24af6ef6d5e823837470c0c1ccaf6ae43d64a7ce1e0427b89e571ec38ad1d718065f6896656018f5ddb6189d8f60ad7f4e9218473cd203c8341259ee6a2ae1446057a493be99132521a3ee26944a67642ba6ee9071e9b15f6d644c93bb82bc4543105a36284c459e91ec5519afcea79f5b8b9485e1cabf3b551f959bd9664b3c301ee6fe2f562ce378cf570ddf3da5c35ec0273c9fe5f6b86c54298aa77c1bee5f20b77ee97d1928fb3684939768364b28313dafb7fad9fa690a882e52ddef1e6ae6730b55a1267ff7b05a92fa4ad77b60439b4a7b549a6f22130867da882c25ff512d5949702a72477c1b0c2b4d919eb92858eb7e67cfacb0ee368e278898d4dff3b489345a314502ad852a7037a208f143f240a3315a5d432c51ae4510e343df0d111d689963b624b4628e8e0a1604704f1778084e07807496d00d94d529284f55a81ee8de5077229501e7c02e80b7f82ce3c649246672c6cab48f0407e0e09772135524204bede73e3ab870edc6c8346f152ae6667fa381bad766a3312a17ab41cb059ad20be93f01d8fd59741e8871f9c6d0b1bf8dbfd042",
+            Hex.encode(OnionRoutingPacketSerializer(OnionRoutingPacket.PaymentPacketLength).write(onionForEve)),
+        )
+        // Eve receives the payment.
+        run {
+            val evePriv = PrivateKey.fromHex("4545454545454545454545454545454545454545454545454545454545454545")
+            val add = UpdateAddHtlc(randomBytes32(), 1, 150_000_000.msat, paymentHash, CltvExpiry(800_000), onionForEve)
             val payload = IncomingPaymentPacket.decrypt(add, evePriv).right
             assertNotNull(payload)
             assertIs<PaymentOnion.FinalPayload.Blinded>(payload)

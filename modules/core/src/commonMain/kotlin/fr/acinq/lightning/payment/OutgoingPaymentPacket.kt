@@ -5,10 +5,7 @@ import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.bitcoin.PublicKey
 import fr.acinq.bitcoin.utils.Either
-import fr.acinq.lightning.CltvExpiry
-import fr.acinq.lightning.Feature
-import fr.acinq.lightning.Lightning
-import fr.acinq.lightning.MilliSatoshi
+import fr.acinq.lightning.*
 import fr.acinq.lightning.channel.ChannelCommand
 import fr.acinq.lightning.crypto.sphinx.FailurePacket
 import fr.acinq.lightning.crypto.sphinx.PacketAndSecrets
@@ -55,6 +52,42 @@ object OutgoingPaymentPacket {
         val trampolinePaymentSecret = Lightning.randomBytes32()
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)
         val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), invoice.paymentHash, OnionRoutingPacket.PaymentPacketLength)
+        return Triple(trampolineAmount, trampolineExpiry, paymentOnion)
+    }
+
+    /**
+     * Build an encrypted payment onion packet when the final recipient supports trampoline.
+     * We use each hop in the blinded path as a trampoline hop, which doesn't reveal anything to our trampoline node.
+     * From their point of view, they will be relaying a trampoline payment to another trampoline node.
+     * They won't even know that a blinded path is being used.
+     */
+    fun buildPacketToTrampolineRecipient(paymentHash: ByteVector32, amount: MilliSatoshi, expiry: CltvExpiry, path: Bolt12Invoice.Companion.PaymentBlindedContactInfo, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
+        require(path.route.route.firstNodeId is EncodedNodeId.WithPublicKey) { "blinded path must provide the introduction node_id" }
+        val (trampolineAmount, trampolineExpiry, trampolineOnion) = run {
+            val blindedAmount = amount + path.paymentInfo.fee(amount)
+            val blindedExpiry = expiry + path.paymentInfo.cltvExpiryDelta
+            val blindedNodes = listOf(path.route.route.firstNodeId.publicKey) + path.route.route.blindedNodeIds.drop(1)
+            val blindedPayloads = when {
+                blindedNodes.size == 1 -> {
+                    val finalPayload = PaymentOnion.FinalPayload.Blinded.create(amount, expiry, path.route.route.encryptedPayloads.last(), path.route.route.firstPathKey)
+                    listOf(finalPayload)
+                }
+                else -> {
+                    val finalPayload = PaymentOnion.FinalPayload.Blinded.create(amount, expiry, path.route.route.encryptedPayloads.last(), pathKey = null)
+                    val intermediatePayloads = path.route.route.encryptedPayloads.drop(1).dropLast(1).map { PaymentOnion.BlindedChannelRelayPayload.create(it, pathKey = null) }
+                    val introductionPayload = PaymentOnion.BlindedChannelRelayPayload.create(path.route.route.encryptedPayloads.first(), path.route.route.firstPathKey)
+                    listOf(introductionPayload) + intermediatePayloads + listOf(finalPayload)
+                }
+            }
+            val trampolinePayload = PaymentOnion.NodeRelayPayload.create(blindedAmount, blindedExpiry, blindedNodes.first())
+            val trampolineOnion = buildOnion(listOf(hop.nodeId) + blindedNodes, listOf(trampolinePayload) + blindedPayloads, paymentHash)
+            val trampolineAmount = blindedAmount + hop.fee(blindedAmount)
+            val trampolineExpiry = blindedExpiry + hop.cltvExpiryDelta
+            Triple(trampolineAmount, trampolineExpiry, trampolineOnion)
+        }
+        val trampolinePaymentSecret = Lightning.randomBytes32()
+        val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)
+        val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), paymentHash, OnionRoutingPacket.PaymentPacketLength)
         return Triple(trampolineAmount, trampolineExpiry, paymentOnion)
     }
 

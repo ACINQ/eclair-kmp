@@ -48,12 +48,11 @@ object IncomingPaymentPacket {
                     when (val trampolineOnion = outer.records.get<OnionPaymentPayloadTlv.TrampolineOnion>()) {
                         null -> validate(htlcAmount, htlcExpiry, outer)
                         else -> {
-                            when (val inner = decryptOnion(paymentHash, trampolineOnion.packet, privateKey, null)) {
+                            when (val inner = decryptOnion(paymentHash, trampolineOnion.packet, privateKey, outer.records.get<OnionPaymentPayloadTlv.PathKey>()?.publicKey)) {
                                 is Either.Left -> Either.Left(inner.value)
                                 is Either.Right -> when (val innerPayload = inner.value) {
                                     is PaymentOnion.FinalPayload.Standard -> validate(htlcAmount, htlcExpiry, outer, innerPayload)
-                                    // Blinded trampoline paths are not supported.
-                                    is PaymentOnion.FinalPayload.Blinded -> Either.Left(InvalidOnionPayload(0, 0))
+                                    is PaymentOnion.FinalPayload.Blinded -> validate(htlcAmount, htlcExpiry, trampolineOnion.packet, innerPayload)
                                 }
                             }
                         }
@@ -72,7 +71,6 @@ object IncomingPaymentPacket {
                     when (val encryptedRecipientData = tlvs.get<OnionPaymentPayloadTlv.EncryptedRecipientData>()?.data) {
                         null -> when {
                             pathKey != null -> Either.Left(InvalidOnionBlinding(hash(packet)))
-                            tlvs.get<OnionPaymentPayloadTlv.PathKey>() != null -> Either.Left(InvalidOnionBlinding(hash(packet)))
                             else -> PaymentOnion.FinalPayload.Standard.read(decrypted.payload)
                         }
                         else -> when {

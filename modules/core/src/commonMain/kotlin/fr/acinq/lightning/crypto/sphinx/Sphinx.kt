@@ -10,24 +10,11 @@ import fr.acinq.bitcoin.utils.Either
 import fr.acinq.bitcoin.utils.Try
 import fr.acinq.bitcoin.utils.runTrying
 import fr.acinq.lightning.crypto.ChaCha20
-import fr.acinq.lightning.utils.*
+import fr.acinq.lightning.utils.toByteVector
+import fr.acinq.lightning.utils.toByteVector32
+import fr.acinq.lightning.utils.xor
 import fr.acinq.lightning.wire.*
 import fr.acinq.secp256k1.Hex
-
-/**
- * Decrypting an onion packet yields a payload for the current node and the encrypted packet for the next node.
- *
- * @param payload      decrypted payload for this node.
- * @param nextPacket   packet for the next node.
- * @param sharedSecret shared secret for the sending node, which we will need to return failure messages.
- */
-data class DecryptedPacket(val payload: ByteVector, val nextPacket: OnionRoutingPacket, val sharedSecret: ByteVector32) {
-    val isLastPacket: Boolean = nextPacket.hmac == ByteVector32.Zeroes
-}
-
-data class SharedSecrets(val perHopSecrets: List<Pair<ByteVector32, PublicKey>>)
-
-data class PacketAndSecrets(val packet: OnionRoutingPacket, val sharedSecrets: SharedSecrets)
 
 /**
  * see https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md
@@ -35,6 +22,22 @@ data class PacketAndSecrets(val packet: OnionRoutingPacket, val sharedSecrets: S
 object Sphinx {
     // We use HMAC-SHA256 which returns 32-bytes message authentication codes.
     const val MacLength = 32
+
+    /**
+     * Decrypting an onion packet yields a payload for the current node and the encrypted packet for the next node.
+     *
+     * @param payload      decrypted payload for this node.
+     * @param nextPacket   packet for the next node.
+     * @param sharedSecret shared secret for the sending node, which we will need to return failure messages.
+     */
+    data class DecryptedPacket(val payload: ByteVector, val nextPacket: OnionRoutingPacket, val sharedSecret: ByteVector32) {
+        val isLastPacket: Boolean = nextPacket.hmac == ByteVector32.Zeroes
+    }
+
+    /** Shared secret used to encrypt the payload for a given node. */
+    data class SharedSecret(val secret: ByteVector32, val remoteNodeId: PublicKey)
+
+    data class PacketAndSecrets(val packet: OnionRoutingPacket, val sharedSecrets: List<SharedSecret>)
 
     /** Secp256k1's base point. */
     private val CurveG = PublicKey(ByteVector("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"))
@@ -263,17 +266,9 @@ object Sphinx {
         }
 
         val packet = loop(payloads.dropLast(1), ephemeralPublicKeys.dropLast(1), sharedsecrets.dropLast(1), lastPacket)
-        return PacketAndSecrets(packet, SharedSecrets(sharedsecrets.zip(publicKeys)))
+        return PacketAndSecrets(packet, sharedsecrets.zip(publicKeys).map { SharedSecret(it.first, it.second) })
     }
 }
-
-/**
- * A properly decrypted failure from a node in the route.
- *
- * @param originNode     public key of the node that generated the failure.
- * @param failureMessage friendly failure message.
- */
-data class DecryptedFailurePacket(val originNode: PublicKey, val failureMessage: FailureMessage)
 
 /**
  * An onion-encrypted failure packet from an intermediate node:
@@ -285,6 +280,21 @@ data class DecryptedFailurePacket(val originNode: PublicKey, val failureMessage:
 object FailurePacket {
 
     private const val RecommendedPayloadLength = 256
+
+    /**
+     * A properly decrypted failure from a node in the route.
+     *
+     * @param originNode     public key of the node that generated the failure.
+     * @param failureMessage friendly failure message.
+     */
+    data class DecryptedPacket(val originNode: PublicKey, val failureMessage: FailureMessage)
+
+    /**
+     * The downstream failure could not be decrypted.
+     *
+     * @param unwrapped encrypted failure packet after unwrapping using our shared secrets.
+     */
+    data class CannotDecryptPacket(val unwrapped: ByteArray)
 
     fun encode(failure: FailureMessage, macKey: ByteVector32, payloadLength: Int = RecommendedPayloadLength): ByteArray {
         val out = ByteArrayOutput()
@@ -343,27 +353,21 @@ object FailurePacket {
      * it was sent by the corresponding node.
      * Note that malicious nodes in the route may have altered the packet, triggering a decryption failure.
      *
-     * @param packet        failure packet.
+     * @param packet failure packet.
      * @param sharedSecrets nodes shared secrets.
-     * @return Success(secret, failure message) if the origin of the packet could be identified and the packet
-     *         decrypted, Failure otherwise.
+     * @return the decrypted failure message and the failing node if the packet can be decrypted.
      */
-    fun decrypt(packet: ByteArray, sharedSecrets: SharedSecrets): Try<DecryptedFailurePacket> {
-        fun loop(packet: ByteArray, secrets: List<Pair<ByteVector32, PublicKey>>): Try<DecryptedFailurePacket> {
-            return if (secrets.isEmpty()) {
-                val ex = IllegalArgumentException("couldn't parse error packet=$packet with sharedSecrets=$secrets")
-                Try.Failure(ex)
-            } else {
-                val (secret, pubkey) = secrets.first()
-                val packet1 = wrap(packet, secret)
-                val um = Sphinx.generateKey("um", secret)
-                when (val error = decode(packet1, um)) {
-                    is Try.Failure -> loop(packet1, secrets.tail())
-                    is Try.Success -> Try.Success(DecryptedFailurePacket(pubkey, error.result))
-                }
+    tailrec fun decrypt(packet: ByteArray, sharedSecrets: List<Sphinx.SharedSecret>): Either<CannotDecryptPacket, DecryptedPacket> {
+        return if (sharedSecrets.isEmpty()) {
+            Either.Left(CannotDecryptPacket(packet))
+        } else {
+            val ss = sharedSecrets.first()
+            val packet1 = wrap(packet, ss.secret)
+            val um = Sphinx.generateKey("um", ss.secret)
+            when (val error = decode(packet1, um)) {
+                is Try.Failure -> decrypt(packet1, sharedSecrets.tail())
+                is Try.Success -> Either.Right(DecryptedPacket(ss.remoteNodeId, error.result))
             }
         }
-
-        return loop(packet, sharedSecrets.perHopSecrets)
     }
 }

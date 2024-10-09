@@ -194,7 +194,7 @@ class WaitForAcceptChannelTestsCommon : LightningTestSuite() {
             requestRemoteFunding: Satoshi? = null,
             zeroConf: Boolean = false,
         ): Triple<LNChannel<WaitForAcceptChannel>, LNChannel<WaitForFundingCreated>, AcceptDualFundedChannel> {
-            val (alice, bob, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, currentHeight, aliceFundingAmount, bobFundingAmount, requestRemoteFunding, zeroConf)
+            val (alice, bob, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, aliceUsePeerStorage = true, bobUsePeerStorage = true, currentHeight, aliceFundingAmount, bobFundingAmount, requestRemoteFunding, zeroConf)
             assertEquals(open.fundingAmount, aliceFundingAmount)
             assertEquals(open.channelType, channelType)
             requestRemoteFunding?.let {

@@ -60,6 +60,7 @@ sealed class ChannelCommand {
     }
 
     data class MessageReceived(val message: LightningMessage) : ChannelCommand()
+    data object PeerBackupReceived : ChannelCommand()
     data class WatchReceived(val watch: WatchEvent) : ChannelCommand()
 
     sealed interface ForbiddenDuringSplice

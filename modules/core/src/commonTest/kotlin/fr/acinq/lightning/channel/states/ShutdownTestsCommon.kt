@@ -356,18 +356,6 @@ class ShutdownTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `recv Shutdown with encrypted channel data`() {
-        val (_, bob0) = reachNormal()
-        assertTrue(bob0.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-        assertFalse(bob0.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) // this isn't a permanent channel feature
-        val (bob1, actions1) = bob0.process(ChannelCommand.Close.MutualClose(null, null))
-        assertIs<LNChannel<Normal>>(bob1)
-        val blob = EncryptedChannelData.from(bob1.staticParams.nodeParams.nodePrivateKey, bob1.state)
-        val shutdown = actions1.findOutgoingMessage<Shutdown>()
-        assertEquals(blob, shutdown.channelData)
-    }
-
-    @Test
     fun `recv Shutdown with non-initiator paying commit fees`() {
         val (alice, bob) = reachNormal(requestRemoteFunding = TestConstants.bobFundingAmount)
         assertFalse(alice.commitments.params.localParams.paysCommitTxFees)
@@ -549,7 +537,7 @@ class ShutdownTestsCommon : LightningTestSuite() {
 
     @Test
     fun `basic disconnection and reconnection`() {
-        val (alice0, bob0) = init(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = init(bobUsePeerStorage = false)
         val (alice1, bob1, reestablishes) = SyncingTestsCommon.disconnect(alice0, bob0)
         val (aliceReestablish, bobReestablish) = reestablishes
         val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(bobReestablish))
@@ -569,8 +557,10 @@ class ShutdownTestsCommon : LightningTestSuite() {
             currentBlockHeight: Int = TestConstants.defaultBlockHeight,
             aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
             bobFeatures: Features = TestConstants.Bob.nodeParams.features,
+            aliceUsePeerStorage: Boolean = false,
+            bobUsePeerStorage: Boolean = true,
         ): Pair<LNChannel<ShuttingDown>, LNChannel<ShuttingDown>> {
-            val (alice, bob) = reachNormal(channelType, aliceFeatures, bobFeatures, currentBlockHeight)
+            val (alice, bob) = reachNormal(channelType, aliceFeatures, bobFeatures, aliceUsePeerStorage, bobUsePeerStorage, currentBlockHeight)
             val (_, cmdAdd1) = makeCmdAdd(300_000_000.msat, bob.staticParams.nodeParams.nodeId, currentBlockHeight.toLong(), r1)
             val (alice1, actions) = alice.process(cmdAdd1)
             val htlc1 = actions.findOutgoingMessage<UpdateAddHtlc>()
@@ -600,8 +590,6 @@ class ShutdownTestsCommon : LightningTestSuite() {
             assertIs<LNChannel<ShuttingDown>>(bob1)
             assertIs<ShuttingDown>(alice2.state)
             assertIs<ShuttingDown>(bob1.state)
-            if (alice2.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown.channelData.isEmpty())
-            if (bob1.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown1.channelData.isEmpty())
             return Pair(alice2, bob1)
         }
     }

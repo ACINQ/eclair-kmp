@@ -281,9 +281,6 @@ data class Closing(
                             null -> Pair(closing1, listOf())
                             else -> {
                                 logger.info { "channel is now closed" }
-                                if (closingType !is MutualClose) {
-                                    logger.debug { "last known remoteChannelData=${commitments.remoteChannelData}" }
-                                }
                                 Pair(Closed(closing1), listOf(setClosingStatus(closingType)))
                             }
                         }
@@ -375,6 +372,7 @@ data class Closing(
             is ChannelCommand.Funding -> unhandled(cmd)
             is ChannelCommand.Connected -> unhandled(cmd)
             is ChannelCommand.Disconnected -> unhandled(cmd)
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 

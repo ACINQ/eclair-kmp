@@ -89,39 +89,6 @@ class StateSerializationTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `maximum number of HTLCs that is safe to use`() {
-        val (alice, bob) = TestsHelper.reachNormal()
-        assertTrue(bob.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-
-        tailrec fun addHtlcs(sender: LNChannel<Normal>, receiver: LNChannel<Normal>, amount: MilliSatoshi, count: Int): Pair<LNChannel<Normal>, LNChannel<Normal>> = if (count == 0) Pair(sender, receiver) else {
-            val (p, _) = TestsHelper.addHtlc(amount, sender, receiver)
-            val (alice1, bob1) = p
-            assertIs<LNChannel<Normal>>(alice1)
-            assertIs<LNChannel<Normal>>(bob1)
-            addHtlcs(alice1, bob1, amount, count - 1)
-        }
-
-        fun commitSigSize(maxIncoming: Int, maxOutgoing: Int): Int {
-            val (alice1, bob1) = addHtlcs(alice, bob, MilliSatoshi(6000_000), maxOutgoing)
-            val (bob2, alice2) = addHtlcs(bob1, alice1, MilliSatoshi(6000_000), maxIncoming)
-            val (alice3, bob3) = crossSign(alice2, bob2)
-
-            assertIs<LNChannel<Normal>>(alice3)
-            assertIs<LNChannel<Normal>>(bob3)
-            val (_, commitSig0, _, commitSig1) = SpliceTestsCommon.spliceInAndOutWithoutSigs(alice3, bob3, listOf(50_000.sat), 50_000.sat)
-            assertFalse(commitSig1.channelData.isEmpty())
-
-            val bina = LightningMessage.encode(commitSig0)
-            val binb = LightningMessage.encode(commitSig1)
-            return max(bina.size, binb.size)
-        }
-
-        // with 5 incoming payments and 5 outgoing payments, we can still add our encrypted backup to commig_sig messages
-        // and stay below the 65k limit for a future channel_reestablish message of unknown size
-        assertTrue(commitSigSize(5, 5) < 60_000)
-    }
-
-    @Test
     fun `liquidity ads lease backwards compatibility`() {
         run {
             // The serialized data was created with lightning-kmp v1.5.12.

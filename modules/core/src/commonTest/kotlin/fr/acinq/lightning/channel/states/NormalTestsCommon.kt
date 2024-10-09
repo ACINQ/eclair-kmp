@@ -725,34 +725,14 @@ class NormalTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `recv ChannelCommand_Sign -- channel backup + non-initiator`() {
-        val (alice, bob) = reachNormal()
-        assertTrue(alice.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupProvider))
-        assertTrue(bob.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-        val (_, cmdAdd) = makeCmdAdd(50_000_000.msat, alice.staticParams.nodeParams.nodeId, alice.currentBlockHeight.toLong())
-        val (bob1, actions) = bob.process(cmdAdd)
-        val add = actions.findOutgoingMessage<UpdateAddHtlc>()
-        val (alice1, _) = alice.process(ChannelCommand.MessageReceived(add))
-        assertIs<LNChannel<Normal>>(alice1)
-        assertTrue { alice1.state.commitments.changes.remoteChanges.proposed.contains(add) }
-        val (bob2, actions2) = bob1.process(ChannelCommand.Commitment.Sign)
-        val commitSig = actions2.findOutgoingMessage<CommitSig>()
-        assertIs<LNChannel<Normal>>(bob2)
-        val blob = EncryptedChannelData.from(bob.staticParams.nodeParams.nodePrivateKey, bob2.state)
-        assertEquals(blob, commitSig.channelData)
-    }
-
-    @Test
     fun `recv CommitSig -- one htlc received`() {
-        val (alice0, bob0) = reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = reachNormal()
         val (nodes0, _, htlc) = addHtlc(50_000_000.msat, alice0, bob0)
         val (alice1, bob1) = nodes0
         assertIs<LNChannel<Normal>>(bob1)
 
         val (_, bob2) = signAndRevack(alice1, bob1)
-        val (bob3, actions3) = bob2.process(ChannelCommand.Commitment.Sign)
-        val commitSig = actions3.findOutgoingMessage<CommitSig>()
-        assertTrue(commitSig.channelData.isEmpty())
+        val (bob3, _) = bob2.process(ChannelCommand.Commitment.Sign)
         assertIs<LNChannel<Normal>>(bob3)
         assertTrue(bob3.commitments.latest.localCommit.spec.htlcs.incomings().any { it.id == htlc.id })
         assertEquals(1, bob3.commitments.latest.localCommit.publishableTxs.htlcTxsAndSigs.size)
@@ -987,33 +967,8 @@ class NormalTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `recv RevokeAndAck -- channel backup + non-initiator`() {
-        val (alice, bob) = reachNormal()
-        assertTrue(alice.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupProvider))
-        assertTrue(bob.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-        val (_, cmdAdd) = makeCmdAdd(50_000_000.msat, alice.staticParams.nodeParams.nodeId, alice.currentBlockHeight.toLong())
-        val (bob1, actions) = bob.process(cmdAdd)
-        val add = actions.findOutgoingMessage<UpdateAddHtlc>()
-        val (alice1, _) = alice.process(ChannelCommand.MessageReceived(add))
-        assertIs<LNChannel<Normal>>(alice1)
-        assertTrue(alice1.commitments.changes.remoteChanges.proposed.contains(add))
-        val (bob2, actions2) = bob1.process(ChannelCommand.Commitment.Sign)
-        val commitSig = actions2.findOutgoingMessage<CommitSig>()
-        val (alice2, actions3) = alice1.process(ChannelCommand.MessageReceived(commitSig))
-        val revack = actions3.findOutgoingMessage<RevokeAndAck>()
-        val (bob3, _) = bob2.process(ChannelCommand.MessageReceived(revack))
-        val (_, actions4) = alice2.process(ChannelCommand.Commitment.Sign)
-        val commitSig1 = actions4.findOutgoingMessage<CommitSig>()
-        val (bob4, actions5) = bob3.process(ChannelCommand.MessageReceived(commitSig1))
-        val revack1 = actions5.findOutgoingMessage<RevokeAndAck>()
-        assertIs<LNChannel<Normal>>(bob4)
-        val blob = EncryptedChannelData.from(bob4.staticParams.nodeParams.nodePrivateKey, bob4.state)
-        assertEquals(blob, revack1.channelData)
-    }
-
-    @Test
     fun `recv RevokeAndAck -- one htlc sent`() {
-        val (alice0, bob0) = reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = reachNormal()
         val (alice1, bob1) = addHtlc(50_000_000.msat, alice0, bob0).first
 
         val (alice2, actionsAlice2) = alice1.process(ChannelCommand.Commitment.Sign)
@@ -1022,7 +977,6 @@ class NormalTestsCommon : LightningTestSuite() {
         val commitSig = actionsAlice2.findOutgoingMessage<CommitSig>()
         val (_, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(commitSig))
         val revokeAndAck = actionsBob2.findOutgoingMessage<RevokeAndAck>()
-        assertTrue(revokeAndAck.channelData.isEmpty())
 
         val (alice3, _) = alice2.process(ChannelCommand.MessageReceived(revokeAndAck))
         assertIs<LNChannel<Normal>>(alice3)

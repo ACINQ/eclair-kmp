@@ -1176,7 +1176,7 @@ class ClosingTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv BITCOIN_TX_CONFIRMED -- future remote commit`() {
-        val (alice0, bob0) = reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = reachNormal(bobUsePeerStorage = false)
         val (_, bobDisconnected) = run {
             // This HTLC will be fulfilled.
             val (nodes1, preimage, htlc) = addHtlc(25_000_000.msat, alice0, bob0)

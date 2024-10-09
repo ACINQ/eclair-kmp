@@ -115,6 +115,7 @@ sealed class ChannelReadyTlv : Tlv {
 }
 
 sealed class CommitSigTlv : Tlv {
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : CommitSigTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
@@ -168,6 +169,7 @@ sealed class CommitSigTlv : Tlv {
 }
 
 sealed class RevokeAndAckTlv : Tlv {
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : RevokeAndAckTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
@@ -190,6 +192,7 @@ sealed class ChannelReestablishTlv : Tlv {
         }
     }
 
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : ChannelReestablishTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
@@ -202,6 +205,7 @@ sealed class ChannelReestablishTlv : Tlv {
 }
 
 sealed class ShutdownTlv : Tlv {
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : ShutdownTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)
@@ -228,6 +232,7 @@ sealed class ClosingSignedTlv : Tlv {
         }
     }
 
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : ClosingSignedTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)

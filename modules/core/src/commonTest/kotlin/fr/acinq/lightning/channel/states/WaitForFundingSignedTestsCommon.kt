@@ -34,7 +34,7 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             bob.process(ChannelCommand.MessageReceived(commitSigAlice)).also { (state, actions) ->
                 assertIs<WaitForFundingConfirmed>(state.state)
                 assertEquals(actions.size, 5)
-                actions.hasOutgoingMessage<TxSignatures>().also { assertFalse(it.channelData.isEmpty()) }
+                actions.hasOutgoingMessage<TxSignatures>()
                 actions.findWatch<WatchConfirmed>().also { assertEquals(WatchConfirmed(state.channelId, commitInput.outPoint.txid, commitInput.txOut.publicKeyScript, 3, BITCOIN_FUNDING_DEPTHOK), it) }
                 actions.find<ChannelAction.Storage.StoreIncomingPayment.ViaNewChannel>().also { assertEquals(TestConstants.bobFundingAmount.toMilliSatoshi(), it.amountReceived) }
                 actions.has<ChannelAction.Storage.StoreState>()
@@ -56,7 +56,7 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             bob.process(ChannelCommand.MessageReceived(commitSigAlice)).also { (state, actions) ->
                 assertIs<WaitForChannelReady>(state.state)
                 assertEquals(actions.size, 6)
-                actions.hasOutgoingMessage<TxSignatures>().also { assertFalse(it.channelData.isEmpty()) }
+                actions.hasOutgoingMessage<TxSignatures>()
                 actions.hasOutgoingMessage<ChannelReady>().also { assertEquals(ShortChannelId.peerId(bob.staticParams.nodeParams.nodeId), it.alias) }
                 actions.findWatch<WatchConfirmed>().also { assertEquals(state.commitments.latest.fundingTxId, it.txId) }
                 actions.find<ChannelAction.Storage.StoreIncomingPayment.ViaNewChannel>().also { assertEquals(TestConstants.bobFundingAmount.toMilliSatoshi(), it.amountReceived) }
@@ -85,7 +85,7 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             assertEquals(actions.size, 5)
             assertEquals(TestConstants.bobFundingAmount + purchase.fees.total, state.commitments.latest.localCommit.spec.toLocal.truncateToSatoshi())
             assertEquals(TestConstants.aliceFundingAmount - purchase.fees.total, state.commitments.latest.localCommit.spec.toRemote.truncateToSatoshi())
-            actions.hasOutgoingMessage<TxSignatures>().also { assertFalse(it.channelData.isEmpty()) }
+            actions.hasOutgoingMessage<TxSignatures>()
             actions.findWatch<WatchConfirmed>().also { assertEquals(BITCOIN_FUNDING_DEPTHOK, it.event) }
             actions.find<ChannelAction.Storage.StoreIncomingPayment.ViaNewChannel>().also { assertEquals((TestConstants.bobFundingAmount + purchase.fees.total).toMilliSatoshi(), it.amountReceived) }
             actions.has<ChannelAction.Storage.StoreState>()
@@ -148,7 +148,6 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(txSigsBob))
             assertIs<WaitForFundingConfirmed>(alice2.state)
             assertEquals(6, actionsAlice2.size)
-            assertTrue(actionsAlice2.hasOutgoingMessage<TxSignatures>().channelData.isEmpty())
             actionsAlice2.has<ChannelAction.Storage.StoreState>()
             val watchConfirmedAlice = actionsAlice2.findWatch<WatchConfirmed>()
             assertEquals(WatchConfirmed(alice2.channelId, commitInput.outPoint.txid, commitInput.txOut.publicKeyScript, 3, BITCOIN_FUNDING_DEPTHOK), watchConfirmedAlice)
@@ -175,7 +174,6 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(txSigsBob))
             assertIs<WaitForFundingConfirmed>(alice2.state)
             assertEquals(8, actionsAlice2.size)
-            assertTrue(actionsAlice2.hasOutgoingMessage<TxSignatures>().channelData.isEmpty())
             actionsAlice2.has<ChannelAction.Storage.StoreState>()
             val watchConfirmedAlice = actionsAlice2.findWatch<WatchConfirmed>()
             assertEquals(WatchConfirmed(alice2.channelId, commitInput.outPoint.txid, commitInput.txOut.publicKeyScript, 3, BITCOIN_FUNDING_DEPTHOK), watchConfirmedAlice)
@@ -204,7 +202,6 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(txSigsBob))
             assertIs<WaitForChannelReady>(alice2.state)
             assertEquals(7, actionsAlice2.size)
-            assertTrue(actionsAlice2.hasOutgoingMessage<TxSignatures>().channelData.isEmpty())
             assertEquals(actionsAlice2.hasOutgoingMessage<ChannelReady>().alias, ShortChannelId.peerId(alice.staticParams.nodeParams.nodeId))
             assertEquals(actionsAlice2.findWatch<WatchConfirmed>().txId, alice2.commitments.latest.fundingTxId)
             actionsAlice2.has<ChannelAction.Storage.StoreState>()
@@ -326,6 +323,8 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             aliceFeatures: Features = TestConstants.Alice.nodeParams.features,
             bobFeatures: Features = TestConstants.Bob.nodeParams.features,
+            aliceUsePeerStorage: Boolean = false,
+            bobUsePeerStorage: Boolean = true,
             currentHeight: Int = TestConstants.defaultBlockHeight,
             aliceFundingAmount: Satoshi = TestConstants.aliceFundingAmount,
             bobFundingAmount: Satoshi = TestConstants.bobFundingAmount,
@@ -337,6 +336,8 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
                 channelType,
                 aliceFeatures,
                 bobFeatures,
+                aliceUsePeerStorage,
+                bobUsePeerStorage,
                 currentHeight,
                 aliceFundingAmount,
                 bobFundingAmount,
@@ -352,15 +353,11 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
             assertIs<LNChannel<WaitForFundingSigned>>(alice2)
             assertIs<WaitForFundingSigned>(alice2.state)
             val commitSigAlice = actionsAlice2.findOutgoingMessage<CommitSig>()
-            assertTrue(commitSigAlice.channelData.isEmpty())
             actionsAlice2.has<ChannelAction.Storage.StoreState>()
             val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(actionsAlice2.findOutgoingMessage<TxComplete>()))
             assertIs<LNChannel<WaitForFundingSigned>>(bob3)
             assertIs<WaitForFundingSigned>(bob3.state)
             val commitSigBob = actionsBob3.findOutgoingMessage<CommitSig>()
-            if (bob.staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient)) {
-                assertFalse(commitSigBob.channelData.isEmpty())
-            }
             actionsBob3.has<ChannelAction.Storage.StoreState>()
             return Fixture(alice2, commitSigAlice, bob3, commitSigBob, walletAlice)
         }

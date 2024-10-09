@@ -350,7 +350,7 @@ class SyncingTestsCommon : LightningTestSuite() {
     companion object {
         fun init(): Pair<LNChannel<Normal>, LNChannel<Normal>> {
             // NB: we disable channel backups to ensure Bob sends his channel_reestablish on reconnection.
-            val (alice, bob, _) = reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice, bob, _) = reachNormal(bobUsePeerStorage = false)
             return Pair(alice, bob)
         }
 
@@ -381,6 +381,7 @@ class SyncingTestsCommon : LightningTestSuite() {
         }
 
         fun disconnect(alice: LNChannel<ChannelStateWithCommitments>, bob: LNChannel<ChannelStateWithCommitments>): Triple<LNChannel<Syncing>, LNChannel<Syncing>, Pair<ChannelReestablish, ChannelReestablish>> {
+            assertFalse(bob.staticParams.nodeParams.usePeerStorage)
             val (alice1, actionsAlice1) = alice.process(ChannelCommand.Disconnected)
             val (bob1, actionsBob1) = bob.process(ChannelCommand.Disconnected)
             assertIs<Offline>(alice1.state)
@@ -390,7 +391,6 @@ class SyncingTestsCommon : LightningTestSuite() {
 
             val aliceInit = Init(alice1.commitments.params.localParams.features)
             val bobInit = Init(bob1.commitments.params.localParams.features)
-            assertFalse(bob1.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
 
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.Connected(aliceInit, bobInit))
             assertIs<LNChannel<Syncing>>(alice2)
@@ -404,6 +404,7 @@ class SyncingTestsCommon : LightningTestSuite() {
         data class SyncingFixture(val alice: LNChannel<Syncing>, val bob: LNChannel<Syncing>, val channelReestablishAlice: ChannelReestablish, val channelReestablishBob: ChannelReestablish?)
 
         fun disconnectWithBackup(alice: LNChannel<PersistedChannelState>, bob: LNChannel<PersistedChannelState>): SyncingFixture {
+            assertTrue(bob.staticParams.nodeParams.usePeerStorage)
             val (alice1, actionsAlice1) = alice.process(ChannelCommand.Disconnected)
             val (bob1, actionsBob1) = bob.process(ChannelCommand.Disconnected)
             assertIs<Offline>(alice1.state)
@@ -416,13 +417,12 @@ class SyncingTestsCommon : LightningTestSuite() {
                 is ChannelStateWithCommitments -> alice.state.commitments.params.localParams.features
             }
             val aliceInit = Init(aliceFeatures)
-            assertTrue(aliceFeatures.hasFeature(Feature.ChannelBackupProvider))
+            assertTrue(aliceFeatures.hasFeature(Feature.ProvideStorage))
             val bobFeatures = when (bob.state) {
                 is WaitForFundingSigned -> bob.state.channelParams.localParams.features
                 is ChannelStateWithCommitments -> bob.state.commitments.params.localParams.features
             }
             val bobInit = Init(bobFeatures)
-            assertTrue(bobFeatures.hasFeature(Feature.ChannelBackupClient))
 
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.Connected(aliceInit, bobInit))
             assertIs<LNChannel<Syncing>>(alice2)

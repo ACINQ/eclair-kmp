@@ -610,7 +610,7 @@ object Serialization {
             }
             writeNullable(lastIndex) { writeNumber(it) }
         }
-        writeDelimited(remoteChannelData.data.toByteArray())
+        writeNumber(0) // ignored legacy remoteChannelData
     }
 
     private fun Output.writeDirectedHtlc(htlc: DirectedHtlc) = htlc.run {

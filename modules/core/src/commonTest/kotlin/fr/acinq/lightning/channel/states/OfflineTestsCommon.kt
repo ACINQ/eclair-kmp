@@ -22,7 +22,7 @@ class OfflineTestsCommon : LightningTestSuite() {
         val (alice, aliceCommitSig, bob, _) = WaitForFundingSignedTestsCommon.init(
             ChannelType.SupportedChannelType.AnchorOutputsZeroReserve,
             zeroConf = true,
-            bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient).initFeatures()
+            bobUsePeerStorage = false,
         )
         val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(aliceCommitSig))
         assertIs<WaitForChannelReady>(bob1.state)
@@ -50,7 +50,7 @@ class OfflineTestsCommon : LightningTestSuite() {
 
     @Test
     fun `handle disconnect - connect events -- no messages sent yet`() {
-        val (alice, bob) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient).initFeatures())
+        val (alice, bob) = TestsHelper.reachNormal(bobUsePeerStorage = false)
         val (alice1, bob1) = disconnect(alice, bob)
 
         val localInit = Init(alice.commitments.params.localParams.features.initFeatures())
@@ -92,7 +92,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `re-send update and sig after first commitment`() {
         val (alice0, bob0) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val cmdAdd = ChannelCommand.Htlc.Add(1_000_000.msat, ByteVector32.Zeroes, CltvExpiryDelta(144).toCltvExpiry(alice0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID())
             val (alice1, actions1) = alice0.process(cmdAdd)
             val add = actions1.hasOutgoingMessage<UpdateAddHtlc>()
@@ -160,7 +160,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `re-send lost revocation`() {
         val (alice0, bob0) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val cmdAdd = ChannelCommand.Htlc.Add(1_000_000.msat, ByteVector32.Zeroes, CltvExpiryDelta(144).toCltvExpiry(alice0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID())
             val (alice1, actionsAlice1) = alice0.process(cmdAdd)
             val add = actionsAlice1.hasOutgoingMessage<UpdateAddHtlc>()
@@ -224,7 +224,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `resume htlc settlement`() {
         val (alice0, bob0, revB) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val (nodes1, r1, htlc1) = TestsHelper.addHtlc(15_000_000.msat, bob0, alice0)
             val (bob1, alice1) = TestsHelper.crossSign(nodes1.first, nodes1.second)
             val (bob2, alice2) = TestsHelper.fulfillHtlc(htlc1.id, r1, bob1, alice1)
@@ -283,7 +283,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `discover that we have a revoked commitment`() {
         val (alice, aliceOld, bob) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val (nodes1, r1, htlc1) = TestsHelper.addHtlc(250_000_000.msat, alice0, bob0)
             val (alice1, bob1) = TestsHelper.crossSign(nodes1.first, nodes1.second)
             val (nodes2, r2, htlc2) = TestsHelper.addHtlc(100_000_000.msat, alice1, bob1)
@@ -349,7 +349,7 @@ class OfflineTestsCommon : LightningTestSuite() {
 
     @Test
     fun `counterparty lies about having a more recent commitment and publishes current commitment`() {
-        val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
         // The current state contains a pending htlc.
         val (alice1, bob1) = run {
             val (aliceTmp, bobTmp) = TestsHelper.addHtlc(250_000_000.msat, alice0, bob0).first
@@ -401,7 +401,7 @@ class OfflineTestsCommon : LightningTestSuite() {
 
     @Test
     fun `counterparty lies about having a more recent commitment and publishes revoked commitment`() {
-        val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+        val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
         // We sign a new commitment to make sure the first one is revoked.
         val bobRevokedCommitTx = bob0.commitments.latest.localCommit.publishableTxs.commitTx.tx
         val (alice1, bob1) = run {
@@ -455,7 +455,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `reprocess pending incoming htlcs after disconnection or wallet restart`() {
         val (alice, bob, htlcs) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val (aliceId, bobId) = Pair(alice0.staticParams.nodeParams.nodeId, bob0.staticParams.nodeParams.nodeId)
             val currentBlockHeight = alice0.currentBlockHeight.toLong()
             // We add some htlcs Alice ---> Bob
@@ -512,7 +512,7 @@ class OfflineTestsCommon : LightningTestSuite() {
     @Test
     fun `reprocess pending incoming htlcs after disconnection or wallet restart -- htlc settlement signed by us`() {
         val (alice, bob, htlcs) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = TestsHelper.reachNormal(bobUsePeerStorage = false)
             val (aliceId, bobId) = Pair(alice0.staticParams.nodeParams.nodeId, bob0.staticParams.nodeParams.nodeId)
             val currentBlockHeight = alice0.currentBlockHeight.toLong()
             val preimage = randomBytes32()
@@ -553,23 +553,6 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertEquals(fulfill.id, htlcs[1].id)
         actionsBob.hasOutgoingMessage<CommitSig>()
         assertEquals(listOf(ChannelAction.ProcessIncomingHtlc(htlcs[2])), actionsBob.filterIsInstance<ChannelAction.ProcessIncomingHtlc>())
-    }
-
-    @Test
-    fun `wait for their channel reestablish when using channel backup`() {
-        val (alice, bob) = TestsHelper.reachNormal()
-        assertTrue(bob.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-        val (alice1, bob1) = disconnect(alice, bob)
-        val localInit = Init(alice.commitments.params.localParams.features)
-        val remoteInit = Init(bob.commitments.params.localParams.features)
-
-        val (alice2, actions) = alice1.process(ChannelCommand.Connected(localInit, remoteInit))
-        assertIs<Syncing>(alice2.state)
-        actions.findOutgoingMessage<ChannelReestablish>()
-        val (bob2, actions1) = bob1.process(ChannelCommand.Connected(remoteInit, localInit))
-        assertIs<Syncing>(bob2.state)
-        // Bob waits to receive Alice's channel reestablish before sending his own.
-        assertTrue(actions1.isEmpty())
     }
 
     @Test

@@ -8,7 +8,6 @@ import fr.acinq.lightning.channel.ChannelAction
 import fr.acinq.lightning.channel.ChannelCommand
 import fr.acinq.lightning.channel.Helpers
 import fr.acinq.lightning.channel.LocalFundingStatus
-import fr.acinq.lightning.utils.msat
 import fr.acinq.lightning.wire.ChannelTlv
 import fr.acinq.lightning.wire.OpenDualFundedChannel
 import fr.acinq.lightning.wire.TlvStream
@@ -151,6 +150,7 @@ data object WaitForInit : ChannelState() {
             is ChannelCommand.Closing -> unhandled(cmd)
             is ChannelCommand.Connected -> unhandled(cmd)
             is ChannelCommand.Disconnected -> unhandled(cmd)
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 }

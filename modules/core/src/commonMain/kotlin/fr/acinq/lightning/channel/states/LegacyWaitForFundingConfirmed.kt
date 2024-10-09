@@ -80,6 +80,7 @@ data class LegacyWaitForFundingConfirmed(
             is ChannelCommand.Closing -> unhandled(cmd)
             is ChannelCommand.Connected -> unhandled(cmd)
             is ChannelCommand.Disconnected -> Pair(Offline(this@LegacyWaitForFundingConfirmed), listOf())
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 }

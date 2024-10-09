@@ -89,7 +89,6 @@ data class Negotiating(
                                                     closingTxProposed.last() + listOf(ClosingTxProposed(closingTx, closingSigned))
                                                 )
                                                 val nextState = this@Negotiating.copy(
-                                                    commitments = commitments.copy(remoteChannelData = cmd.message.channelData),
                                                     closingTxProposed = closingProposed1,
                                                     bestUnpublishedClosingTx = signedClosingTx
                                                 )
@@ -127,7 +126,6 @@ data class Negotiating(
                                                         closingTxProposed.last() + listOf(ClosingTxProposed(closingTx, closingSigned))
                                                     )
                                                     val nextState = this@Negotiating.copy(
-                                                        commitments = commitments.copy(remoteChannelData = cmd.message.channelData),
                                                         closingTxProposed = closingProposed1,
                                                         bestUnpublishedClosingTx = signedClosingTx
                                                     )
@@ -179,6 +177,7 @@ data class Negotiating(
             is ChannelCommand.Closing -> unhandled(cmd)
             is ChannelCommand.Connected -> unhandled(cmd)
             is ChannelCommand.Disconnected -> Pair(Offline(this@Negotiating), listOf())
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 

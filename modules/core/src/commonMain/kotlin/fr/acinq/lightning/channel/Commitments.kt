@@ -566,7 +566,6 @@ data class Commitments(
     val payments: Map<Long, UUID>, // for outgoing htlcs, maps to paymentId
     val remoteNextCommitInfo: Either<WaitingForRevocation, PublicKey>, // this one is tricky, it must be kept in sync with Commitment.nextRemoteCommit
     val remotePerCommitmentSecrets: ShaChain,
-    val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
 ) {
     init {
         require(active.isNotEmpty()) { "there must be at least one active commitment" }
@@ -794,7 +793,6 @@ data class Commitments(
                 localChanges = changes.localChanges.copy(acked = emptyList()),
                 remoteChanges = changes.remoteChanges.copy(proposed = emptyList(), acked = changes.remoteChanges.acked + changes.remoteChanges.proposed)
             ),
-            remoteChannelData = commits.last().channelData // the last message is the most recent
         )
         return Either.Right(Pair(commitments1, revocation))
     }
@@ -849,7 +847,6 @@ data class Commitments(
             remoteNextCommitInfo = Either.Right(revocation.nextPerCommitmentPoint),
             remotePerCommitmentSecrets = remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret.value, 0xFFFFFFFFFFFFL - remoteCommitIndex),
             payments = payments1,
-            remoteChannelData = revocation.channelData
         )
         return Either.Right(Pair(commitments1, actions.toList()))
     }

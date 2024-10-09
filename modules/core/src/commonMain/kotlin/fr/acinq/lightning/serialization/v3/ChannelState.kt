@@ -396,7 +396,7 @@ internal data class Commitments(
     val commitInput: Transactions.InputInfo,
     val remotePerCommitmentSecrets: ShaChain,
     val channelId: ByteVector32,
-    val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
+    val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty // Legacy field needed to deserialize old backups
 ) {
     fun export() = fr.acinq.lightning.channel.Commitments(
         fr.acinq.lightning.channel.ChannelParams(
@@ -438,7 +438,6 @@ internal data class Commitments(
         payments,
         remoteNextCommitInfo.transform({ x -> fr.acinq.lightning.channel.WaitingForRevocation(x.sentAfterLocalCommitIndex) }, { y -> y }),
         remotePerCommitmentSecrets,
-        remoteChannelData
     )
 }
 

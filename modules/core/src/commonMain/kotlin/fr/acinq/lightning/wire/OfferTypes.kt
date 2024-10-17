@@ -13,6 +13,7 @@ import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.message.OnionMessages
+import fr.acinq.lightning.payment.ContactAddress
 
 /**
  * Lightning Bolt 12 offers
@@ -409,6 +410,57 @@ object OfferTypes {
     }
 
     /**
+     * When paying one of our contacts, this contains the secret that lets them detect that the payment came from us.
+     * See [bLIP 42](https://github.com/lightning/blips/blob/master/blip-0042.md) for more details.
+     */
+    data class InvoiceRequestContactSecret(val contactSecret: ByteVector32) : InvoiceRequestTlv() {
+        override val tag: Long get() = InvoiceRequestContactSecret.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(contactSecret, out)
+
+        companion object : TlvValueReader<InvoiceRequestContactSecret> {
+            const val tag: Long = 2_000_001_729L
+            override fun read(input: Input): InvoiceRequestContactSecret = InvoiceRequestContactSecret(LightningCodecs.bytes(input, 32).byteVector32())
+        }
+    }
+
+    /**
+     * When paying one of our contacts, we may include our offer to allow them to pay us back and add us to their contacts.
+     * See [bLIP 42](https://github.com/lightning/blips/blob/master/blip-0042.md) for more details.
+     */
+    data class InvoiceRequestPayerOffer(val offer: Offer) : InvoiceRequestTlv() {
+        override val tag: Long get() = InvoiceRequestPayerOffer.tag
+        override fun write(out: Output) = LightningCodecs.writeBytes(Offer.tlvSerializer.write(offer.records), out)
+
+        companion object : TlvValueReader<InvoiceRequestPayerOffer> {
+            const val tag: Long = 2_000_001_731L
+            override fun read(input: Input): InvoiceRequestPayerOffer = InvoiceRequestPayerOffer(Offer(Offer.tlvSerializer.read(LightningCodecs.bytes(input, input.availableBytes))))
+        }
+    }
+
+    /**
+     * When paying one of our contacts, we may include our BIP 353 address to allow them to pay us back and add us to their contacts.
+     * See [bLIP 42](https://github.com/lightning/blips/blob/master/blip-0042.md) for more details.
+     */
+    data class InvoiceRequestPayerAddress(val address: ContactAddress) : InvoiceRequestTlv() {
+        override val tag: Long get() = InvoiceRequestPayerAddress.tag
+        override fun write(out: Output) {
+            LightningCodecs.writeByte(address.name.length, out)
+            LightningCodecs.writeBytes(address.name.encodeToByteArray(), out)
+            LightningCodecs.writeByte(address.domain.length, out)
+            LightningCodecs.writeBytes(address.domain.encodeToByteArray(), out)
+        }
+
+        companion object : TlvValueReader<InvoiceRequestPayerAddress> {
+            const val tag: Long = 2_000_001_733L
+            override fun read(input: Input): InvoiceRequestPayerAddress {
+                val name = LightningCodecs.bytes(input, LightningCodecs.byte(input)).decodeToString()
+                val domain = LightningCodecs.bytes(input, LightningCodecs.byte(input)).decodeToString()
+                return InvoiceRequestPayerAddress(ContactAddress(name, domain))
+            }
+        }
+    }
+
+    /**
      * Payment paths to send the payment to.
      */
     data class InvoicePaths(val paths: List<ContactInfo.BlindedPath>) : InvoiceTlv() {
@@ -717,6 +769,9 @@ object OfferTypes {
         }
     }
 
+    /** A bolt 12 offer and the private key used to sign invoices for that offer. */
+    data class OfferAndKey(val offer: Offer, val privateKey: PrivateKey)
+
     data class Offer(val records: TlvStream<OfferTlv>) {
         val chains: List<BlockHash> = records.get<OfferChains>()?.chains ?: listOf(Block.LivenetGenesisBlock.hash)
         val metadata: ByteVector? = records.get<OfferMetadata>()?.data
@@ -797,9 +852,13 @@ object OfferTypes {
                 blindedPathSessionKey: PrivateKey,
                 additionalTlvs: Set<OfferTlv> = setOf(),
                 customTlvs: Set<GenericTlv> = setOf()
-            ): Pair<Offer, PrivateKey> {
+            ): OfferAndKey {
                 if (description == null) require(amount == null) { "an offer description must be provided if the amount isn't null" }
-                val blindedRouteDetails = OnionMessages.buildRouteToRecipient(blindedPathSessionKey, listOf(OnionMessages.IntermediateNode(EncodedNodeId.WithPublicKey.Plain(trampolineNodeId))), OnionMessages.Destination.Recipient(EncodedNodeId.WithPublicKey.Wallet(nodeParams.nodeId), null))
+                val blindedRouteDetails = OnionMessages.buildRouteToRecipient(
+                    blindedPathSessionKey,
+                    listOf(OnionMessages.IntermediateNode(EncodedNodeId.WithPublicKey.Plain(trampolineNodeId))),
+                    OnionMessages.Destination.Recipient(EncodedNodeId.WithPublicKey.Wallet(nodeParams.nodeId), null)
+                )
                 val tlvs: Set<OfferTlv> = setOfNotNull(
                     if (nodeParams.chainHash != Block.LivenetGenesisBlock.hash) OfferChains(listOf(nodeParams.chainHash)) else null,
                     amount?.let { OfferAmount(it) },
@@ -808,7 +867,7 @@ object OfferTypes {
                     // Note that we don't include an offer_node_id since we're using a blinded path.
                     OfferPaths(listOf(ContactInfo.BlindedPath(blindedRouteDetails.route))),
                 )
-                return Pair(Offer(TlvStream(tlvs + additionalTlvs, customTlvs)), blindedRouteDetails.blindedPrivateKey(nodeParams.nodePrivateKey))
+                return OfferAndKey(Offer(TlvStream(tlvs + additionalTlvs, customTlvs)), blindedRouteDetails.blindedPrivateKey(nodeParams.nodePrivateKey))
             }
 
             fun validate(records: TlvStream<OfferTlv>): Either<InvalidTlvPayload, Offer> {
@@ -858,6 +917,9 @@ object OfferTypes {
         val quantity: Long = quantity_opt ?: 1
         val payerId: PublicKey = records.get<InvoiceRequestPayerId>()!!.publicKey
         val payerNote: String? = records.get<InvoiceRequestPayerNote>()?.note
+        val contactSecret: ByteVector32? = records.get<InvoiceRequestContactSecret>()?.contactSecret
+        val payerOffer: Offer? = records.get<InvoiceRequestPayerOffer>()?.offer
+        val payerAddress: ContactAddress? = records.get<InvoiceRequestPayerAddress>()?.address
         private val signature: ByteVector64 = records.get<Signature>()!!.signature
 
         fun isValid(): Boolean =
@@ -966,6 +1028,9 @@ object OfferTypes {
                     InvoiceRequestQuantity.tag to InvoiceRequestQuantity as TlvValueReader<InvoiceRequestTlv>,
                     InvoiceRequestPayerId.tag to InvoiceRequestPayerId as TlvValueReader<InvoiceRequestTlv>,
                     InvoiceRequestPayerNote.tag to InvoiceRequestPayerNote as TlvValueReader<InvoiceRequestTlv>,
+                    InvoiceRequestContactSecret.tag to InvoiceRequestContactSecret as TlvValueReader<InvoiceRequestTlv>,
+                    InvoiceRequestPayerOffer.tag to InvoiceRequestPayerOffer as TlvValueReader<InvoiceRequestTlv>,
+                    InvoiceRequestPayerAddress.tag to InvoiceRequestPayerAddress as TlvValueReader<InvoiceRequestTlv>,
                     Signature.tag to Signature as TlvValueReader<InvoiceRequestTlv>,
                 )
             )
@@ -1005,6 +1070,9 @@ object OfferTypes {
                 InvoiceRequestQuantity.tag to InvoiceRequestQuantity as TlvValueReader<InvoiceTlv>,
                 InvoiceRequestPayerId.tag to InvoiceRequestPayerId as TlvValueReader<InvoiceTlv>,
                 InvoiceRequestPayerNote.tag to InvoiceRequestPayerNote as TlvValueReader<InvoiceTlv>,
+                InvoiceRequestContactSecret.tag to InvoiceRequestContactSecret as TlvValueReader<InvoiceTlv>,
+                InvoiceRequestPayerOffer.tag to InvoiceRequestPayerOffer as TlvValueReader<InvoiceTlv>,
+                InvoiceRequestPayerAddress.tag to InvoiceRequestPayerAddress as TlvValueReader<InvoiceTlv>,
                 // Invoice part
                 InvoicePaths.tag to InvoicePaths as TlvValueReader<InvoiceTlv>,
                 InvoiceBlindedPay.tag to InvoiceBlindedPay as TlvValueReader<InvoiceTlv>,

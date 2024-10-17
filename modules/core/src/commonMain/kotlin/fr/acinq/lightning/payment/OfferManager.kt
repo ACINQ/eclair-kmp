@@ -47,7 +47,7 @@ class OfferManager(val nodeParams: NodeParams, val walletParams: WalletParams, v
     private val localOffers: HashMap<ByteVector32, OfferTypes.Offer> = HashMap()
 
     init {
-        registerOffer(nodeParams.defaultOffer(walletParams.trampolineNode.id).first, null)
+        registerOffer(nodeParams.defaultOffer(walletParams.trampolineNode.id).offer, null)
     }
 
     fun registerOffer(offer: OfferTypes.Offer, pathId: ByteVector32?) {
@@ -58,7 +58,13 @@ class OfferManager(val nodeParams: NodeParams, val walletParams: WalletParams, v
      * @return invoice requests that must be sent and the corresponding path_id that must be used in case of a timeout.
      */
     fun requestInvoice(payOffer: PayOffer): Triple<ByteVector32, List<OnionMessage>, OfferTypes.InvoiceRequest> {
-        val request = OfferTypes.InvoiceRequest(payOffer.offer, payOffer.amount, 1, nodeParams.features.bolt12Features(), payOffer.payerKey, payOffer.payerNote, nodeParams.chainHash)
+        // If we're providing our contact secret, it means we're willing to reveal our identity to the recipient.
+        // We include our own offer to allow them to add us to their contacts list and pay us back.
+        val contactTlvs = setOfNotNull(
+            payOffer.contactSecret?.let { OfferTypes.InvoiceRequestContactSecret(it) },
+            payOffer.contactSecret?.let { localOffers[ByteVector32.Zeroes] }?.let { OfferTypes.InvoiceRequestPayerOffer(it) },
+        )
+        val request = OfferTypes.InvoiceRequest(payOffer.offer, payOffer.amount, 1, nodeParams.features.bolt12Features(), payOffer.payerKey, payOffer.payerNote, nodeParams.chainHash, contactTlvs)
         val replyPathId = randomBytes32()
         pendingInvoiceRequests[replyPathId] = PendingInvoiceRequest(payOffer, request)
         // We add dummy hops to the reply path: this way the receiver only learns that we're at most 3 hops away from our peer.
@@ -162,7 +168,27 @@ class OfferManager(val nodeParams: NodeParams, val walletParams: WalletParams, v
                         it.take(63) + "…"
                     }
                 }
-                val pathId = OfferPaymentMetadata.V1(ByteVector32(decrypted.pathId), amount, preimage, request.payerId, truncatedPayerNote, request.quantity, currentTimestampMillis()).toPathId(nodeParams.nodePrivateKey)
+                // We mustn't use too much space in the path_id, otherwise the sender won't be able to include it in its payment onion.
+                // If the payer_address is provided, we don't include the payer_offer: we can retrieve it from the DNS.
+                // Otherwise, we want to include the payer_offer, but we must skip it if it's too large.
+                val payerOfferSize = request.payerOffer?.let { OfferTypes.Offer.tlvSerializer.write(it.records).size }
+                val payerOffer = when {
+                    request.payerAddress != null -> null
+                    payerOfferSize != null && payerOfferSize > 300 -> null
+                    else -> request.payerOffer
+                }
+                val pathId = OfferPaymentMetadata.V2(
+                    ByteVector32(decrypted.pathId),
+                    amount,
+                    preimage,
+                    request.payerId,
+                    truncatedPayerNote,
+                    request.quantity,
+                    request.contactSecret,
+                    payerOffer,
+                    request.payerAddress,
+                    currentTimestampMillis()
+                ).toPathId(nodeParams.nodePrivateKey)
                 val recipientPayload = RouteBlindingEncryptedData(TlvStream(RouteBlindingEncryptedDataTlv.PathId(pathId))).write().toByteVector()
                 val cltvExpiryDelta = remoteChannelUpdates.maxOfOrNull { it.cltvExpiryDelta } ?: walletParams.invoiceDefaultRoutingFees.cltvExpiryDelta
                 val paymentInfo = OfferTypes.PaymentInfo(

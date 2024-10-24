@@ -218,6 +218,9 @@ class Peer(
     private var _channels by _channelsFlow
     val channels: Map<ByteVector32, ChannelState> get() = _channelsFlow.value
 
+    // backup stored by our peer
+    private var peerStorage: EncryptedChannelData? = null
+
     private val _connectionState = MutableStateFlow<Connection>(Connection.CLOSED(null))
     val connectionState: StateFlow<Connection> get() = _connectionState
 
@@ -254,6 +257,15 @@ class Peer(
             )
         )
         return state.run { ctx.process(cmd) }
+            .let { (state1, actions) ->
+                if (theirInit?.features?.hasFeature(Feature.ProvideStorage) == true &&
+                    state1 is PersistedChannelState &&
+                    actions.any { it is ChannelAction.Message.Send && it.message is UpdatesChannelData }) {
+                    Pair(state1, actions + ChannelAction.Message.Send(PeerStorageStore(EncryptedChannelData.from(nodeParams.nodePrivateKey, state1))))
+                } else {
+                    Pair(state1, actions)
+                }
+            }
             .also { (state1, _) ->
                 if (state1::class != state::class) {
                     ctx.logger.info { "${state.stateName} -> ${state1.stateName}" }
@@ -1088,13 +1100,48 @@ class Peer(
                             processActions(msg.temporaryChannelId, peerConnection, actions1 + actions2)
                         }
                     }
+                    is PeerStorageRetrieval -> {
+                        peerStorage = msg.ecd
+                    }
                     is ChannelReestablish -> {
                         val local: ChannelState? = _channels[msg.channelId]
-                        val backup: DeserializationResult? = msg.channelData.takeIf { !it.isEmpty() }?.let { channelData ->
+                        val backupLegacy: DeserializationResult? = msg.channelData.takeIf { !it.isEmpty() }?.let { channelData ->
                             PersistedChannelState
                                 .from(nodeParams.nodePrivateKey, channelData)
                                 .onFailure { logger.warning(it) { "unreadable backup" } }
                                 .getOrNull()
+                        }
+                        val backupPeerStorage: DeserializationResult? = peerStorage?.let { it.takeIf { !it.isEmpty() }?.let { channelData ->
+                            PersistedChannelState
+                                .from(nodeParams.nodePrivateKey, channelData)
+                                .onFailure { logger.warning(it) { "unreadable backup" } }
+                                .getOrNull()
+                        }}
+                        val backup = when {
+                            backupPeerStorage == null && backupLegacy == null -> {
+                                logger.warning { "No backup available" }
+                                null
+                            }
+                            backupPeerStorage == null -> {
+                                logger.warning { "No peer storage backup, using legacy channel data" }
+                                backupLegacy
+                            }
+                            backupPeerStorage is DeserializationResult.Success && backupPeerStorage.state.channelId != msg.channelId -> {
+                                logger.error { "Received peer storage backup for different channel, using legacy channel data" }
+                                backupLegacy
+                            }
+                            backupPeerStorage != backupLegacy -> {
+                                logger.error { "Peer storage backup and legacy channel data do not match" }
+                                // Selecting most recent backup
+                                when {
+                                    backupPeerStorage is DeserializationResult.UnknownVersion && (backupLegacy !is DeserializationResult.UnknownVersion || backupPeerStorage.version > backupLegacy.version) ->
+                                        backupPeerStorage
+                                    backupPeerStorage is DeserializationResult.Success && backupPeerStorage.state is ChannelStateWithCommitments && backupLegacy is DeserializationResult.Success && backupLegacy.state is ChannelStateWithCommitments && backupLegacy.state.commitments.isMoreRecent(backupPeerStorage.state.commitments) ->
+                                        backupLegacy
+                                    else -> backupPeerStorage
+                                }
+                            }
+                            else -> backupPeerStorage
                         }
 
                         suspend fun recoverChannel(recovered: PersistedChannelState) {

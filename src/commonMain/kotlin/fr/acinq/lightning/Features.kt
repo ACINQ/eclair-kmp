@@ -134,6 +134,13 @@ sealed class Feature {
     }
 
     @Serializable
+    object ProvideStorage : Feature() {
+        override val rfcName get() = "option_provide_storage"
+        override val mandatory get() = 42
+        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
+    }
+
+    @Serializable
     object ChannelType : Feature() {
         override val rfcName get() = "option_channel_type"
         override val mandatory get() = 44
@@ -337,6 +344,7 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.ShutdownAnySegwit,
             Feature.DualFunding,
             Feature.Quiescence,
+            Feature.ProvideStorage,
             Feature.ChannelType,
             Feature.PaymentMetadata,
             Feature.TrampolinePayment,

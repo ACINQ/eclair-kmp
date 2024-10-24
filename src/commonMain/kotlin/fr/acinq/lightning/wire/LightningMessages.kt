@@ -95,6 +95,8 @@ interface LightningMessage {
                 SpliceInit.type -> SpliceInit.read(stream)
                 SpliceAck.type -> SpliceAck.read(stream)
                 SpliceLocked.type -> SpliceLocked.read(stream)
+                PeerStorageStore.type -> PeerStorageStore.read(stream)
+                PeerStorageRetrieval.type -> PeerStorageRetrieval.read(stream)
                 else -> UnknownMessage(code.toLong())
             }
         }
@@ -166,6 +168,8 @@ data class EncryptedChannelData(val data: ByteVector) {
         val empty: EncryptedChannelData = EncryptedChannelData(ByteVector.empty)
     }
 }
+
+interface UpdatesChannelData : HasChannelId
 
 interface HasEncryptedChannelData : HasChannelId {
     val channelData: EncryptedChannelData
@@ -491,7 +495,7 @@ data class TxSignatures(
     val txId: TxId,
     val witnesses: List<ScriptWitness>,
     val tlvs: TlvStream<TxSignaturesTlv> = TlvStream.empty()
-) : InteractiveTxMessage(), HasChannelId, HasEncryptedChannelData {
+) : InteractiveTxMessage(), HasChannelId, HasEncryptedChannelData, UpdatesChannelData {
     constructor(
         channelId: ByteVector32,
         tx: Transaction,
@@ -1223,7 +1227,7 @@ data class CommitSig(
     val signature: ByteVector64,
     val htlcSignatures: List<ByteVector64>,
     val tlvStream: TlvStream<CommitSigTlv> = TlvStream.empty()
-) : HtlcMessage, HasChannelId, HasEncryptedChannelData {
+) : HtlcMessage, HasChannelId, HasEncryptedChannelData, UpdatesChannelData {
     override val type: Long get() = CommitSig.type
 
     override val channelData: EncryptedChannelData get() = tlvStream.get<CommitSigTlv.ChannelData>()?.ecb ?: EncryptedChannelData.empty
@@ -1268,7 +1272,7 @@ data class RevokeAndAck(
     val perCommitmentSecret: PrivateKey,
     val nextPerCommitmentPoint: PublicKey,
     val tlvStream: TlvStream<RevokeAndAckTlv> = TlvStream.empty()
-) : HtlcMessage, HasChannelId, HasEncryptedChannelData {
+) : HtlcMessage, HasChannelId, HasEncryptedChannelData, UpdatesChannelData {
     override val type: Long get() = RevokeAndAck.type
 
     override val channelData: EncryptedChannelData get() = tlvStream.get<RevokeAndAckTlv.ChannelData>()?.ecb ?: EncryptedChannelData.empty
@@ -1545,7 +1549,7 @@ data class Shutdown(
     override val channelId: ByteVector32,
     val scriptPubKey: ByteVector,
     val tlvStream: TlvStream<ShutdownTlv> = TlvStream.empty()
-) : ChannelMessage, HasChannelId, HasEncryptedChannelData, ForbiddenMessageDuringSplice {
+) : ChannelMessage, HasChannelId, HasEncryptedChannelData, ForbiddenMessageDuringSplice, UpdatesChannelData {
     override val type: Long get() = Shutdown.type
 
     override val channelData: EncryptedChannelData get() = tlvStream.get<ShutdownTlv.ChannelData>()?.ecb ?: EncryptedChannelData.empty
@@ -1579,7 +1583,7 @@ data class ClosingSigned(
     val feeSatoshis: Satoshi,
     val signature: ByteVector64,
     val tlvStream: TlvStream<ClosingSignedTlv> = TlvStream.empty()
-) : ChannelMessage, HasChannelId, HasEncryptedChannelData {
+) : ChannelMessage, HasChannelId, HasEncryptedChannelData, UpdatesChannelData {
     override val type: Long get() = ClosingSigned.type
 
     override val channelData: EncryptedChannelData get() = tlvStream.get<ClosingSignedTlv.ChannelData>()?.ecb ?: EncryptedChannelData.empty
@@ -1942,6 +1946,40 @@ data class RecommendedFeerates(
             commitmentFeerate = FeeratePerKw(LightningCodecs.u32(input).sat),
             tlvStream = TlvStreamSerializer(false, readers).read(input)
         )
+    }
+}
+
+data class PeerStorageStore(val ecd: EncryptedChannelData) : LightningMessage {
+    override val type: Long get() = PeerStorageStore.type
+
+    override fun write(out: Output) {
+        LightningCodecs.writeU16(ecd.data.size(), out)
+        LightningCodecs.writeBytes(ecd.data, out)
+    }
+
+    companion object : LightningMessageReader<PeerStorageStore> {
+        const val type: Long = 7
+
+        override fun read(input: Input): PeerStorageStore {
+            return PeerStorageStore(EncryptedChannelData(LightningCodecs.bytes(input, LightningCodecs.u16(input)).toByteVector()))
+        }
+    }
+}
+
+data class PeerStorageRetrieval(val ecd: EncryptedChannelData) : LightningMessage {
+    override val type: Long get() = PeerStorageRetrieval.type
+
+    override fun write(out: Output) {
+        LightningCodecs.writeU16(ecd.data.size(), out)
+        LightningCodecs.writeBytes(ecd.data, out)
+    }
+
+    companion object : LightningMessageReader<PeerStorageRetrieval> {
+        const val type: Long = 9
+
+        override fun read(input: Input): PeerStorageRetrieval {
+            return PeerStorageRetrieval(EncryptedChannelData(LightningCodecs.bytes(input, LightningCodecs.u16(input)).toByteVector()))
+        }
     }
 }
 

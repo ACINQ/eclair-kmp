@@ -89,11 +89,21 @@ object OutgoingPaymentPacket {
                     listOf(introductionPayload) + intermediatePayloads + listOf(finalPayload)
                 }
             }
-            val trampolinePayload = PaymentOnion.NodeRelayPayload.create(blindedAmount, blindedExpiry, blindedNodes.first())
-            val trampolineOnion = buildOnion(listOf(hop.nodeId) + blindedNodes, listOf(trampolinePayload) + blindedPayloads, paymentHash)
-            val trampolineAmount = blindedAmount + hop.fee(blindedAmount)
-            val trampolineExpiry = blindedExpiry + hop.cltvExpiryDelta
-            Triple(trampolineAmount, trampolineExpiry, trampolineOnion)
+            when {
+                hop.nodeId == path.route.route.firstNodeId.publicKey -> {
+                    // We don't need a trampoline hop to reach the introduction node of their blinded path, because it's our trampoline node.
+                    val trampolineOnion = buildOnion(blindedNodes, blindedPayloads, paymentHash)
+                    Triple(blindedAmount, blindedExpiry, trampolineOnion)
+                }
+                else -> {
+                    // We use our trampoline node to reach the introduction node of their blinded path.
+                    val trampolinePayload = PaymentOnion.NodeRelayPayload.create(blindedAmount, blindedExpiry, blindedNodes.first())
+                    val trampolineOnion = buildOnion(listOf(hop.nodeId) + blindedNodes, listOf(trampolinePayload) + blindedPayloads, paymentHash)
+                    val trampolineAmount = blindedAmount + hop.fee(blindedAmount)
+                    val trampolineExpiry = blindedExpiry + hop.cltvExpiryDelta
+                    Triple(trampolineAmount, trampolineExpiry, trampolineOnion)
+                }
+            }
         }
         val trampolinePaymentSecret = Lightning.randomBytes32()
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)

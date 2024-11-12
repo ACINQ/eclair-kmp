@@ -743,6 +743,17 @@ class Peer(
         return incomingPaymentHandler.createInvoice(paymentPreimage, amount, description, extraHops, expiry ?: nodeParams.bolt11InvoiceExpiry)
     }
 
+    /** Creates a custom offer and register it with the `offerManager`.
+     *  @param secret A random private key for creating the blinded path of the offer. Must be unique to this offer.
+     *  The offer returned is deterministic, if you need to persist you just need to save the parameters used to create it.
+     */
+    fun createOffer(secret: PrivateKey, amount: MilliSatoshi?, description: String?): OfferTypes.Offer {
+        val pathId = secret.value
+        val (offer, _) = OfferTypes.Offer.createBlindedOffer(amount, description, nodeParams, remoteNodeId, Features.empty, secret, pathId)
+        offerManager.registerOffer(offer, pathId)
+        return offer
+    }
+
     // The (node_id, fcm_token) tuple only needs to be registered once.
     // And after that, only if the tuple changes (e.g. different fcm_token).
     fun registerFcmToken(token: String?) {

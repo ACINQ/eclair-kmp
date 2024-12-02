@@ -164,7 +164,7 @@ suspend fun CoroutineScope.newPeer(
             nextRemoteRevocationNumber = state.commitments.remoteCommitIndex,
             yourLastCommitmentSecret = PrivateKey(yourLastPerCommitmentSecret),
             myCurrentPerCommitmentPoint = myCurrentPerCommitmentPoint
-        ).withChannelData(state.commitments.remoteChannelData)
+        )
 
         peer.send(MessageReceived(connection.id, channelReestablish))
     }

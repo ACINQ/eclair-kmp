@@ -60,7 +60,7 @@ data class WaitForFundingConfirmed(
                                 }
                                 is Either.Right -> {
                                     val action: InteractiveTxSigningSessionAction.SendTxSigs = res.value
-                                    sendRbfTxSigs(action, cmd.message.channelData)
+                                    sendRbfTxSigs(action)
                                 }
                             }
                         }
@@ -210,7 +210,7 @@ data class WaitForFundingConfirmed(
                             }
                             // No need to store their commit_sig, they will re-send it if we disconnect.
                             InteractiveTxSigningSessionAction.WaitForTxSigs -> Pair(this@WaitForFundingConfirmed.copy(rbfStatus = rbfStatus.copy(session = signingSession1)), listOf())
-                            is InteractiveTxSigningSessionAction.SendTxSigs -> sendRbfTxSigs(action, cmd.message.channelData)
+                            is InteractiveTxSigningSessionAction.SendTxSigs -> sendRbfTxSigs(action)
                         }
                     }
                     else -> {
@@ -299,16 +299,17 @@ data class WaitForFundingConfirmed(
                 }
                 Pair(Offline(this@WaitForFundingConfirmed.copy(rbfStatus = rbfStatus1)), listOf())
             }
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 
-    private fun ChannelContext.sendRbfTxSigs(action: InteractiveTxSigningSessionAction.SendTxSigs, remoteChannelData: EncryptedChannelData): Pair<WaitForFundingConfirmed, List<ChannelAction>> {
+    private fun ChannelContext.sendRbfTxSigs(action: InteractiveTxSigningSessionAction.SendTxSigs): Pair<WaitForFundingConfirmed, List<ChannelAction>> {
         logger.info { "rbf funding tx created with txId=${action.fundingTx.txId}, ${action.fundingTx.sharedTx.tx.localInputs.size} local inputs, ${action.fundingTx.sharedTx.tx.remoteInputs.size} remote inputs, ${action.fundingTx.sharedTx.tx.localOutputs.size} local outputs and ${action.fundingTx.sharedTx.tx.remoteOutputs.size} remote outputs" }
         val fundingMinDepth = Helpers.minDepthForFunding(staticParams.nodeParams, action.fundingTx.fundingParams.fundingAmount)
         logger.info { "will wait for $fundingMinDepth confirmations" }
         val watchConfirmed = WatchConfirmed(channelId, action.commitment.fundingTxId, action.commitment.commitInput.txOut.publicKeyScript, fundingMinDepth.toLong(), BITCOIN_FUNDING_DEPTHOK)
         val nextState = WaitForFundingConfirmed(
-            commitments.add(action.commitment).copy(remoteChannelData = remoteChannelData),
+            commitments.add(action.commitment),
             waitingSinceBlock,
             deferred,
             RbfStatus.None

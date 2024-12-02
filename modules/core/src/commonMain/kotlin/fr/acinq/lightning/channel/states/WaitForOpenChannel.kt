@@ -149,6 +149,7 @@ data class WaitForOpenChannel(
             is ChannelCommand.WatchReceived -> unhandled(cmd)
             is ChannelCommand.Funding -> unhandled(cmd)
             is ChannelCommand.Closing -> unhandled(cmd)
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 }

@@ -156,6 +156,7 @@ data class WaitForFundingCreated(
                 replyTo.complete(ChannelFundingResponse.Failure.Disconnected)
                 Pair(Aborted, listOf())
             }
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 }

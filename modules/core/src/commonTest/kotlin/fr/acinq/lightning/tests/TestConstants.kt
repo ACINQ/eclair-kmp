@@ -80,7 +80,7 @@ object TestConstants {
                 Feature.PaymentMetadata to FeatureSupport.Optional,
                 Feature.ExperimentalTrampolinePayment to FeatureSupport.Optional,
                 Feature.WakeUpNotificationProvider to FeatureSupport.Optional,
-                Feature.ChannelBackupProvider to FeatureSupport.Optional,
+                Feature.ProvideStorage to FeatureSupport.Optional,
                 Feature.ExperimentalSplice to FeatureSupport.Optional,
                 Feature.OnTheFlyFunding to FeatureSupport.Optional,
             ),

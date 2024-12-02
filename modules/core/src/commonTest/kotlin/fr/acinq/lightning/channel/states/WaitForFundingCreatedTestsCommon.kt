@@ -55,9 +55,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
         val commitSigBob = actionsBob3.findOutgoingMessage<CommitSig>()
         assertEquals(commitSigAlice.channelId, commitSigBob.channelId)
         assertTrue(commitSigAlice.htlcSignatures.isEmpty())
-        assertTrue(commitSigAlice.channelData.isEmpty())
         assertTrue(commitSigBob.htlcSignatures.isEmpty())
-        assertFalse(commitSigBob.channelData.isEmpty())
         actionsAlice2.has<ChannelAction.Storage.StoreState>()
         actionsBob3.has<ChannelAction.Storage.StoreState>()
         assertIs<WaitForFundingSigned>(alice2.state)
@@ -284,6 +282,8 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
             channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             aliceFeatures: Features = TestConstants.Alice.nodeParams.features.initFeatures(),
             bobFeatures: Features = TestConstants.Bob.nodeParams.features.initFeatures(),
+            aliceUsePeerStorage: Boolean = false,
+            bobUsePeerStorage: Boolean = true,
             currentHeight: Int = TestConstants.defaultBlockHeight,
             aliceFundingAmount: Satoshi = TestConstants.aliceFundingAmount,
             bobFundingAmount: Satoshi = TestConstants.bobFundingAmount,
@@ -291,7 +291,7 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
             zeroConf: Boolean = false,
             channelOrigin: Origin? = null
         ): Fixture {
-            val (a, b, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, currentHeight, aliceFundingAmount, bobFundingAmount, requestRemoteFunding, zeroConf, channelOrigin)
+            val (a, b, open) = TestsHelper.init(channelType, aliceFeatures, bobFeatures, aliceUsePeerStorage, bobUsePeerStorage, currentHeight, aliceFundingAmount, bobFundingAmount, requestRemoteFunding, zeroConf, channelOrigin)
             val (b1, actions) = b.process(ChannelCommand.MessageReceived(open))
             val accept = actions.findOutgoingMessage<AcceptDualFundedChannel>()
             assertIs<LNChannel<WaitForFundingCreated>>(b1)

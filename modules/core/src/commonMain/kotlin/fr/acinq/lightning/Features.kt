@@ -134,6 +134,13 @@ sealed class Feature {
     }
 
     @Serializable
+    object ProvideStorage : Feature() {
+        override val rfcName get() = "option_provide_storage"
+        override val mandatory get() = 42
+        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
+    }
+
+    @Serializable
     object ChannelType : Feature() {
         override val rfcName get() = "option_channel_type"
         override val mandatory get() = 44
@@ -224,7 +231,7 @@ sealed class Feature {
         override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
     }
 
-    /** This feature bit should be activated when a node wants to send channel backups to their peers. */
+    /** This feature is deprecated but must be kept to allow deserialization of old backups. */
     @Serializable
     object ChannelBackupClient : Feature() {
         override val rfcName get() = "channel_backup_client"
@@ -232,7 +239,7 @@ sealed class Feature {
         override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init)
     }
 
-    /** This feature bit should be activated when a node stores channel backups for their peers. */
+    /** This feature is deprecated but must be kept to allow deserialization of old backups. */
     @Serializable
     object ChannelBackupProvider : Feature() {
         override val rfcName get() = "channel_backup_provider"
@@ -337,6 +344,7 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.ShutdownAnySegwit,
             Feature.DualFunding,
             Feature.Quiescence,
+            Feature.ProvideStorage,
             Feature.ChannelType,
             Feature.PaymentMetadata,
             Feature.TrampolinePayment,

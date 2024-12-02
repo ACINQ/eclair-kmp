@@ -62,26 +62,10 @@ sealed class ChannelState {
     suspend fun ChannelContext.process(cmd: ChannelCommand): Pair<ChannelState, List<ChannelAction>> {
         return try {
             processInternal(cmd)
-                .let { (newState, actions) -> Pair(newState, newState.run { maybeAddBackupToMessages(actions) }) }
                 .let { (newState, actions) -> Pair(newState, actions + onTransition(newState)) }
         } catch (t: Throwable) {
             handleLocalError(cmd, t)
         }
-    }
-
-    /** Update outgoing messages to include an encrypted backup when necessary. */
-    private fun ChannelContext.maybeAddBackupToMessages(actions: List<ChannelAction>): List<ChannelAction> = when {
-        this@ChannelState is PersistedChannelState && staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient) -> actions.map {
-            when {
-                it is ChannelAction.Message.Send && it.message is TxSignatures -> it.copy(message = it.message.withChannelData(EncryptedChannelData.from(privateKey, this@ChannelState), logger))
-                it is ChannelAction.Message.Send && it.message is CommitSig -> it.copy(message = it.message.withChannelData(EncryptedChannelData.from(privateKey, this@ChannelState), logger))
-                it is ChannelAction.Message.Send && it.message is RevokeAndAck -> it.copy(message = it.message.withChannelData(EncryptedChannelData.from(privateKey, this@ChannelState), logger))
-                it is ChannelAction.Message.Send && it.message is Shutdown -> it.copy(message = it.message.withChannelData(EncryptedChannelData.from(privateKey, this@ChannelState), logger))
-                it is ChannelAction.Message.Send && it.message is ClosingSigned -> it.copy(message = it.message.withChannelData(EncryptedChannelData.from(privateKey, this@ChannelState), logger))
-                else -> it
-            }
-        }
-        else -> actions
     }
 
     /** Add actions for some transitions */
@@ -301,7 +285,7 @@ sealed class ChannelState {
 sealed class PersistedChannelState : ChannelState() {
     abstract val channelId: ByteVector32
 
-    internal fun ChannelContext.createChannelReestablish(): HasEncryptedChannelData = when (val state = this@PersistedChannelState) {
+    internal fun ChannelContext.createChannelReestablish(): ChannelReestablish = when (val state = this@PersistedChannelState) {
         is WaitForFundingSigned -> {
             val myFirstPerCommitmentPoint = keyManager.channelKeys(state.channelParams.localParams.fundingKeyPath).commitmentPoint(0)
             ChannelReestablish(
@@ -311,7 +295,7 @@ sealed class PersistedChannelState : ChannelState() {
                 yourLastCommitmentSecret = PrivateKey(ByteVector32.Zeroes),
                 myCurrentPerCommitmentPoint = myFirstPerCommitmentPoint,
                 TlvStream(ChannelReestablishTlv.NextFunding(state.signingSession.fundingTx.txId))
-            ).withChannelData(state.remoteChannelData, logger)
+            )
         }
         is ChannelStateWithCommitments -> {
             val yourLastPerCommitmentSecret = state.commitments.remotePerCommitmentSecrets.lastIndex?.let { state.commitments.remotePerCommitmentSecrets.getHash(it) } ?: ByteVector32.Zeroes
@@ -329,7 +313,7 @@ sealed class PersistedChannelState : ChannelState() {
                 yourLastCommitmentSecret = PrivateKey(yourLastPerCommitmentSecret),
                 myCurrentPerCommitmentPoint = myCurrentPerCommitmentPoint,
                 tlvStream = tlvs
-            ).withChannelData(state.commitments.remoteChannelData, logger)
+            )
         }
     }
 

@@ -380,6 +380,8 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
             channelType: ChannelType.SupportedChannelType = ChannelType.SupportedChannelType.AnchorOutputs,
             aliceFeatures: Features = TestConstants.Alice.nodeParams.features.initFeatures(),
             bobFeatures: Features = TestConstants.Bob.nodeParams.features.initFeatures(),
+            aliceUsePeerStorage: Boolean = false,
+            bobUsePeerStorage: Boolean = true,
             currentHeight: Int = TestConstants.defaultBlockHeight,
             aliceFundingAmount: Satoshi = TestConstants.aliceFundingAmount,
             bobFundingAmount: Satoshi = TestConstants.bobFundingAmount,
@@ -389,6 +391,8 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
                 channelType,
                 aliceFeatures,
                 bobFeatures,
+                aliceUsePeerStorage,
+                bobUsePeerStorage,
                 currentHeight,
                 aliceFundingAmount,
                 bobFundingAmount,
@@ -402,9 +406,6 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
             assertIs<WaitForFundingConfirmed>(bob1.state)
             assertEquals(actionsBob1.findWatch<WatchConfirmed>().event, BITCOIN_FUNDING_DEPTHOK)
             val txSigsBob = actionsBob1.findOutgoingMessage<TxSignatures>()
-            if (bob.staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient)) {
-                assertFalse(txSigsBob.channelData.isEmpty())
-            }
             val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(txSigsBob))
             assertIs<LNChannel<WaitForFundingConfirmed>>(alice2)
             val fundingTxAlice = alice2.state.latestFundingTx.signedTx
@@ -495,14 +496,10 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
                     actionsBob3.has<ChannelAction.Storage.StoreState>()
                     val watchBob = actionsBob3.findWatch<WatchConfirmed>()
                     val txSigsBob = actionsBob3.findOutgoingMessage<TxSignatures>()
-                    if (bob.staticParams.nodeParams.features.hasFeature(Feature.ChannelBackupClient)) {
-                        assertFalse(txSigsBob.channelData.isEmpty())
-                    }
                     val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(txSigsBob))
                     assertIs<LNChannel<WaitForFundingConfirmed>>(alice3)
                     assertEquals(actionsAlice3.size, 4)
                     val txSigsAlice = actionsAlice3.hasOutgoingMessage<TxSignatures>()
-                    assertTrue(txSigsAlice.channelData.isEmpty())
                     val watchAlice = actionsAlice3.findWatch<WatchConfirmed>()
                     actionsAlice3.has<ChannelAction.Storage.StoreState>()
                     val fundingTxAlice = actionsAlice3.find<ChannelAction.Blockchain.PublishTx>().tx

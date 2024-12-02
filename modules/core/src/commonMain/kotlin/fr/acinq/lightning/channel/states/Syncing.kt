@@ -20,6 +20,13 @@ data class Syncing(val state: PersistedChannelState, val channelReestablishSent:
 
     override suspend fun ChannelContext.processInternal(cmd: ChannelCommand): Pair<ChannelState, List<ChannelAction>> {
         return when (cmd) {
+            is ChannelCommand.PeerBackupReceived ->
+                Pair(copy(channelReestablishSent = true), buildList {
+                    if (!channelReestablishSent) {
+                        val channelReestablish = state.run { createChannelReestablish() }
+                        add(ChannelAction.Message.Send(channelReestablish))
+                    }
+                })
             is ChannelCommand.MessageReceived -> when (cmd.message) {
                 is ChannelReestablish -> {
                     val (nextState, actions) = when (state) {

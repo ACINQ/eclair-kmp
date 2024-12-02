@@ -178,7 +178,7 @@ data class Normal(
                                     logger.info { "waiting for tx_sigs" }
                                     Pair(this@Normal.copy(spliceStatus = spliceStatus.copy(session = signingSession1)), listOf())
                                 }
-                                is InteractiveTxSigningSessionAction.SendTxSigs -> sendSpliceTxSigs(spliceStatus.origins, action, spliceStatus.liquidityPurchase, cmd.message.channelData)
+                                is InteractiveTxSigningSessionAction.SendTxSigs -> sendSpliceTxSigs(spliceStatus.origins, action, spliceStatus.liquidityPurchase)
                             }
                         }
                         ignoreRetransmittedCommitSig(cmd.message) -> {
@@ -298,7 +298,7 @@ data class Normal(
                                     }
                                     is Either.Right -> {
                                         // no, let's sign right away
-                                        val newState = this@Normal.copy(remoteShutdown = cmd.message, commitments = commitments.copy(remoteChannelData = cmd.message.channelData))
+                                        val newState = this@Normal.copy(remoteShutdown = cmd.message)
                                         Pair(newState, listOf(ChannelAction.Message.SendToSelf(ChannelCommand.Commitment.Sign)))
                                     }
                                 }
@@ -308,18 +308,17 @@ data class Normal(
                                 val actions = mutableListOf<ChannelAction>()
                                 val localShutdown = this@Normal.localShutdown ?: Shutdown(channelId, commitments.params.localParams.defaultFinalScriptPubKey)
                                 if (this@Normal.localShutdown == null) actions.add(ChannelAction.Message.Send(localShutdown))
-                                val commitments1 = commitments.copy(remoteChannelData = cmd.message.channelData)
                                 when {
-                                    commitments1.hasNoPendingHtlcsOrFeeUpdate() && paysClosingFees -> {
+                                    commitments.hasNoPendingHtlcsOrFeeUpdate() && paysClosingFees -> {
                                         val (closingTx, closingSigned) = Helpers.Closing.makeFirstClosingTx(
                                             channelKeys(),
-                                            commitments1.latest,
+                                            commitments.latest,
                                             localShutdown.scriptPubKey.toByteArray(),
                                             cmd.message.scriptPubKey.toByteArray(),
                                             closingFeerates ?: ClosingFeerates(currentOnChainFeerates().mutualCloseFeerate),
                                         )
                                         val nextState = Negotiating(
-                                            commitments1,
+                                            commitments,
                                             localShutdown,
                                             cmd.message,
                                             listOf(listOf(ClosingTxProposed(closingTx, closingSigned))),
@@ -329,14 +328,14 @@ data class Normal(
                                         actions.addAll(listOf(ChannelAction.Storage.StoreState(nextState), ChannelAction.Message.Send(closingSigned)))
                                         Pair(nextState, actions)
                                     }
-                                    commitments1.hasNoPendingHtlcsOrFeeUpdate() -> {
-                                        val nextState = Negotiating(commitments1, localShutdown, cmd.message, listOf(listOf()), null, closingFeerates)
+                                    commitments.hasNoPendingHtlcsOrFeeUpdate() -> {
+                                        val nextState = Negotiating(commitments, localShutdown, cmd.message, listOf(listOf()), null, closingFeerates)
                                         actions.add(ChannelAction.Storage.StoreState(nextState))
                                         Pair(nextState, actions)
                                     }
                                     else -> {
                                         // there are some pending changes, we need to wait for them to be settled (fail/fulfill htlcs and sign fee updates)
-                                        val nextState = ShuttingDown(commitments1, localShutdown, cmd.message, closingFeerates)
+                                        val nextState = ShuttingDown(commitments, localShutdown, cmd.message, closingFeerates)
                                         actions.add(ChannelAction.Storage.StoreState(nextState))
                                         Pair(nextState, actions)
                                     }
@@ -670,7 +669,7 @@ data class Normal(
                                 }
                                 is Either.Right -> {
                                     val action: InteractiveTxSigningSessionAction.SendTxSigs = res.value
-                                    sendSpliceTxSigs(spliceStatus.origins, action, spliceStatus.liquidityPurchase, cmd.message.channelData)
+                                    sendSpliceTxSigs(spliceStatus.origins, action, spliceStatus.liquidityPurchase)
                                 }
                             }
                         }
@@ -844,6 +843,7 @@ data class Normal(
             is ChannelCommand.Connected -> unhandled(cmd)
             is ChannelCommand.Closing -> unhandled(cmd)
             is ChannelCommand.Init -> unhandled(cmd)
+            is ChannelCommand.PeerBackupReceived -> unhandled(cmd)
         }
     }
 
@@ -851,13 +851,12 @@ data class Normal(
         origins: List<Origin>,
         action: InteractiveTxSigningSessionAction.SendTxSigs,
         liquidityPurchase: LiquidityAds.Purchase?,
-        remoteChannelData: EncryptedChannelData
     ): Pair<Normal, List<ChannelAction>> {
         logger.info { "sending tx_sigs" }
         // We watch for confirmation in all cases, to allow pruning outdated commitments when transactions confirm.
         val fundingMinDepth = Helpers.minDepthForFunding(staticParams.nodeParams, action.fundingTx.fundingParams.fundingAmount)
         val watchConfirmed = WatchConfirmed(channelId, action.commitment.fundingTxId, action.commitment.commitInput.txOut.publicKeyScript, fundingMinDepth.toLong(), BITCOIN_FUNDING_DEPTHOK)
-        val commitments = commitments.add(action.commitment).copy(remoteChannelData = remoteChannelData)
+        val commitments = commitments.add(action.commitment)
         val nextState = this@Normal.copy(commitments = commitments, spliceStatus = SpliceStatus.None)
         val actions = buildList {
             add(ChannelAction.Storage.StoreState(nextState))

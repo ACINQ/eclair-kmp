@@ -183,6 +183,7 @@ sealed class TxSignaturesTlv : Tlv {
         }
     }
 
+    // Legacy TLV needed to deserialize old backups
     data class ChannelData(val ecb: EncryptedChannelData) : TxSignaturesTlv() {
         override val tag: Long get() = ChannelData.tag
         override fun write(out: Output) = LightningCodecs.writeBytes(ecb.data, out)

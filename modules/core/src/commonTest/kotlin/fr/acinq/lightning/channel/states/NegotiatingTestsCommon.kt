@@ -377,17 +377,6 @@ class NegotiatingTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `recv ClosingSigned with encrypted channel data`() {
-        val (alice, bob, aliceCloseSig) = init()
-        assertTrue(alice.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupProvider))
-        assertTrue(bob.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
-        assertTrue(aliceCloseSig.channelData.isEmpty())
-        val (_, actions1) = bob.process(ChannelCommand.MessageReceived(aliceCloseSig))
-        val bobCloseSig = actions1.hasOutgoingMessage<ClosingSigned>()
-        assertFalse(bobCloseSig.channelData.isEmpty())
-    }
-
-    @Test
     fun `recv BITCOIN_FUNDING_SPENT -- counterparty's mutual close`() {
         // NB: we're not the initiator here
         val (bob, alice, fundingTx) = reachNormal()

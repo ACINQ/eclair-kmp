@@ -315,7 +315,7 @@ class OutgoingPaymentHandler(val nodeParams: NodeParams, val walletParams: Walle
                 if (request.recipient == walletParams.trampolineNode.id) {
                     // We are directly paying our trampoline node.
                     OutgoingPaymentPacket.buildPacketToTrampolinePeer(paymentRequest, request.amount, expiry)
-                } else if (invoiceFeatures.hasFeature(Feature.TrampolinePayment) || invoiceFeatures.hasFeature(Feature.ExperimentalTrampolinePayment)) {
+                } else if (invoiceFeatures.hasFeature(Feature.ExperimentalTrampolinePayment)) {
                     OutgoingPaymentPacket.buildPacketToTrampolineRecipient(paymentRequest, request.amount, expiry, hop)
                 } else {
                     OutgoingPaymentPacket.buildPacketToLegacyRecipient(paymentRequest, request.amount, expiry, hop)

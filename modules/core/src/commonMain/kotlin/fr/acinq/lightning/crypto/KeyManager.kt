@@ -41,11 +41,7 @@ interface KeyManager {
      * Keys used for the node. They are used to generate the node id, to secure communication with other peers, and
      * to sign network-wide public announcements.
      */
-    data class NodeKeys(
-        /** The node key that the same seed would have produced on the legacy eclair-based Phoenix implementation on Android. Useful to automate the migration. */
-        val legacyNodeKey: DeterministicWallet.ExtendedPrivateKey,
-        val nodeKey: DeterministicWallet.ExtendedPrivateKey,
-    )
+    data class NodeKeys(val nodeKey: DeterministicWallet.ExtendedPrivateKey)
 
     /**
      * Secrets and keys for a given channel.

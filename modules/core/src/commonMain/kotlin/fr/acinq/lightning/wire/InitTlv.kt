@@ -43,22 +43,4 @@ sealed class InitTlv : Tlv {
         }
     }
 
-    data class PhoenixAndroidLegacyNodeId(val legacyNodeId: PublicKey, val signature: ByteVector64) : InitTlv() {
-        override val tag: Long get() = PhoenixAndroidLegacyNodeId.tag
-
-        override fun write(out: Output) {
-            LightningCodecs.writeBytes(legacyNodeId.value, out)
-            LightningCodecs.writeBytes(signature, out)
-        }
-
-        companion object : TlvValueReader<PhoenixAndroidLegacyNodeId> {
-            const val tag: Long = 0x47020001
-
-            override fun read(input: Input): PhoenixAndroidLegacyNodeId {
-                val legacyNodeId = PublicKey(LightningCodecs.bytes(input, 33))
-                val signature = ByteVector64(LightningCodecs.bytes(input, 64))
-                return PhoenixAndroidLegacyNodeId(legacyNodeId, signature)
-            }
-        }
-    }
 }

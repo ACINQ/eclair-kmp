@@ -147,13 +147,13 @@ class SphinxTestsCommon : LightningTestSuite() {
         val packetNonEmptyMac = OnionRoutingPacketSerializer(OnionRoutingPacket.PaymentPacketLength).read(byteArrayOf(0) + publicKeys.first().value.toByteArray() + dummyPayload + nonEmptyMac)
         val testCases = listOf(
             // Bolt 1.0 payloads use the next packet's hmac to signal termination.
-            Pair(true, DecryptedPacket(ByteVector("00"), packetEmptyMac, ByteVector32.One)),
-            Pair(false, DecryptedPacket(ByteVector("00"), packetNonEmptyMac, ByteVector32.One)),
+            Pair(true, Sphinx.DecryptedPacket(ByteVector("00"), packetEmptyMac, ByteVector32.One)),
+            Pair(false, Sphinx.DecryptedPacket(ByteVector("00"), packetNonEmptyMac, ByteVector32.One)),
             // Bolt 1.1 payloads currently also use the next packet's hmac to signal termination.
-            Pair(true, DecryptedPacket(ByteVector("0101"), packetEmptyMac, ByteVector32.One)),
-            Pair(false, DecryptedPacket(ByteVector("0101"), packetNonEmptyMac, ByteVector32.One)),
-            Pair(false, DecryptedPacket(ByteVector("0100"), packetNonEmptyMac, ByteVector32.One)),
-            Pair(false, DecryptedPacket(ByteVector("0101"), packetNonEmptyMac, ByteVector32.One))
+            Pair(true, Sphinx.DecryptedPacket(ByteVector("0101"), packetEmptyMac, ByteVector32.One)),
+            Pair(false, Sphinx.DecryptedPacket(ByteVector("0101"), packetNonEmptyMac, ByteVector32.One)),
+            Pair(false, Sphinx.DecryptedPacket(ByteVector("0100"), packetNonEmptyMac, ByteVector32.One)),
+            Pair(false, Sphinx.DecryptedPacket(ByteVector("0101"), packetNonEmptyMac, ByteVector32.One))
         )
 
         testCases.forEach {
@@ -198,7 +198,7 @@ class SphinxTestsCommon : LightningTestSuite() {
         assertEquals(decrypted3.nextPacket.payload.size(), OnionRoutingPacket.PaymentPacketLength)
         val decrypted4 = (Sphinx.peel(privKeys[4], associatedData, decrypted3.nextPacket) as Either.Right).value
         assertEquals(listOf(decrypted0.payload, decrypted1.payload, decrypted2.payload, decrypted3.payload, decrypted4.payload), referencePaymentPayloads)
-        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.perHopSecrets.map { it.first })
+        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.map { it.secret })
 
         val packets = listOf(decrypted0.nextPacket, decrypted1.nextPacket, decrypted2.nextPacket, decrypted3.nextPacket, decrypted4.nextPacket)
         assertEquals(packets[0].hmac, ByteVector32("901fb2bb905d1cfac67727f900daa2bb9da6801ac31ccce78663e5021e83983b"))
@@ -228,7 +228,7 @@ class SphinxTestsCommon : LightningTestSuite() {
         assertEquals(decrypted3.nextPacket.payload.size(), OnionRoutingPacket.PaymentPacketLength)
         val decrypted4 = (Sphinx.peel(privKeys[4], associatedData, decrypted3.nextPacket) as Either.Right).value
         assertEquals(listOf(decrypted0.payload, decrypted1.payload, decrypted2.payload, decrypted3.payload, decrypted4.payload), paymentPayloadsFull)
-        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.perHopSecrets.map { it.first })
+        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.map { it.secret })
 
         val packets = listOf(decrypted0.nextPacket, decrypted1.nextPacket, decrypted2.nextPacket, decrypted3.nextPacket, decrypted4.nextPacket)
         assertEquals(packets[0].hmac, ByteVector32("859cd694cf604442547246f4fae144f255e71e30cb366b9775f488cac713f0db"))
@@ -279,7 +279,7 @@ class SphinxTestsCommon : LightningTestSuite() {
         val decrypted3 = (Sphinx.peel(privKeys[3], associatedData, decrypted2.nextPacket) as Either.Right).value
         val decrypted4 = (Sphinx.peel(privKeys[4], associatedData, decrypted3.nextPacket) as Either.Right).value
         assertEquals(listOf(decrypted0.payload, decrypted1.payload, decrypted2.payload, decrypted3.payload, decrypted4.payload), trampolinePayloads)
-        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.perHopSecrets.map { it.first })
+        assertEquals(listOf(decrypted0.sharedSecret, decrypted1.sharedSecret, decrypted2.sharedSecret, decrypted3.sharedSecret, decrypted4.sharedSecret), packetAndSecrets.sharedSecrets.map { it.secret })
     }
 
     @Test
@@ -369,7 +369,7 @@ class SphinxTestsCommon : LightningTestSuite() {
 
     @Test
     fun `decrypt failure onion`() {
-        val expected = DecryptedFailurePacket(publicKeys.first(), InvalidOnionKey(ByteVector32.One))
+        val expected = FailurePacket.DecryptedPacket(publicKeys.first(), InvalidOnionKey(ByteVector32.One))
         val sharedSecrets = listOf(
             ByteVector32("0101010101010101010101010101010101010101010101010101010101010101"),
             ByteVector32("0202020202020202020202020202020202020202020202020202020202020202"),
@@ -378,18 +378,18 @@ class SphinxTestsCommon : LightningTestSuite() {
 
         val packet1 = FailurePacket.create(sharedSecrets.first(), expected.failureMessage)
         assertEquals(292, packet1.size)
-        val decrypted1 = FailurePacket.decrypt(packet1, SharedSecrets(listOf(Pair(sharedSecrets[0], publicKeys[0]))))
-        assertEquals(expected, decrypted1.get())
+        val decrypted1 = FailurePacket.decrypt(packet1, listOf(Sphinx.SharedSecret(sharedSecrets[0], publicKeys[0])))
+        assertEquals(expected, decrypted1.right)
 
         val packet2 = FailurePacket.wrap(packet1, sharedSecrets[1])
         assertEquals(292, packet2.size)
-        val decrypted2 = FailurePacket.decrypt(packet2, SharedSecrets(listOf(1, 0).map { i -> Pair(sharedSecrets[i], publicKeys[i]) }))
-        assertEquals(expected, decrypted2.get())
+        val decrypted2 = FailurePacket.decrypt(packet2, listOf(1, 0).map { i -> Sphinx.SharedSecret(sharedSecrets[i], publicKeys[i]) })
+        assertEquals(expected, decrypted2.right)
 
         val packet3 = FailurePacket.wrap(packet2, sharedSecrets[2])
         assertEquals(292, packet3.size)
-        val decrypted3 = FailurePacket.decrypt(packet3, SharedSecrets(listOf(2, 1, 0).map { i -> Pair(sharedSecrets[i], publicKeys[i]) }))
-        assertEquals(expected, decrypted3.get())
+        val decrypted3 = FailurePacket.decrypt(packet3, listOf(2, 1, 0).map { i -> Sphinx.SharedSecret(sharedSecrets[i], publicKeys[i]) })
+        assertEquals(expected, decrypted3.right)
     }
 
     @Test
@@ -406,7 +406,7 @@ class SphinxTestsCommon : LightningTestSuite() {
             ),
             sharedSecrets[2]
         )
-        assertTrue(FailurePacket.decrypt(packet, SharedSecrets(listOf(0, 2, 1).map { i -> Pair(sharedSecrets[i], publicKeys[i]) })).isFailure)
+        assertTrue(FailurePacket.decrypt(packet, listOf(0, 2, 1).map { i -> Sphinx.SharedSecret(sharedSecrets[i], publicKeys[i]) }).isLeft)
     }
 
     @Test
@@ -469,7 +469,7 @@ class SphinxTestsCommon : LightningTestSuite() {
             )
             // origin parses error packet and can see that it comes from node #4
             val decrypted = FailurePacket.decrypt(error0, packetAndSecrets.sharedSecrets)
-            assertEquals(DecryptedFailurePacket(publicKeys[4], TemporaryNodeFailure), decrypted.get())
+            assertEquals(FailurePacket.DecryptedPacket(publicKeys[4], TemporaryNodeFailure), decrypted.right)
         }
     }
 
@@ -512,7 +512,7 @@ class SphinxTestsCommon : LightningTestSuite() {
         )
         // origin parses error packet and can see that it comes from node #4
         val decrypted = FailurePacket.decrypt(error0, packetAndSecrets.sharedSecrets)
-        assertEquals(DecryptedFailurePacket(publicKeys[4], TemporaryNodeFailure), decrypted.get())
+        assertEquals(FailurePacket.DecryptedPacket(publicKeys[4], TemporaryNodeFailure), decrypted.right)
     }
 
     @Test
@@ -547,7 +547,7 @@ class SphinxTestsCommon : LightningTestSuite() {
 
             // origin parses error packet and can see that it comes from node #2
             val decrypted = FailurePacket.decrypt(error0, packetAndSecrets.sharedSecrets)
-            assertEquals(DecryptedFailurePacket(publicKeys[2], InvalidRealm), decrypted.get())
+            assertEquals(FailurePacket.DecryptedPacket(publicKeys[2], InvalidRealm), decrypted.right)
         }
     }
 
@@ -578,7 +578,7 @@ class SphinxTestsCommon : LightningTestSuite() {
 
         // origin parses error packet and can see that it comes from node #2
         val decrypted = FailurePacket.decrypt(error0, packetAndSecrets.sharedSecrets)
-        assertEquals(DecryptedFailurePacket(publicKeys[2], InvalidRealm), decrypted.get())
+        assertEquals(FailurePacket.DecryptedPacket(publicKeys[2], InvalidRealm), decrypted.right)
     }
 
     @Test

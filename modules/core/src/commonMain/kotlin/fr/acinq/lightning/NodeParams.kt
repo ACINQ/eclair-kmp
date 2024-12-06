@@ -173,11 +173,6 @@ data class NodeParams(
         require(features.hasFeature(Feature.ChannelType, FeatureSupport.Mandatory)) { "${Feature.ChannelType.rfcName} should be mandatory" }
         require(features.hasFeature(Feature.DualFunding, FeatureSupport.Mandatory)) { "${Feature.DualFunding.rfcName} should be mandatory" }
         require(features.hasFeature(Feature.RouteBlinding)) { "${Feature.RouteBlinding.rfcName} should be supported" }
-        require(!features.hasFeature(Feature.ZeroConfChannels)) { "${Feature.ZeroConfChannels.rfcName} has been deprecated: use the zeroConfPeers whitelist instead" }
-        require(!features.hasFeature(Feature.TrustedSwapInClient)) { "${Feature.TrustedSwapInClient.rfcName} has been deprecated" }
-        require(!features.hasFeature(Feature.TrustedSwapInProvider)) { "${Feature.TrustedSwapInProvider.rfcName} has been deprecated" }
-        require(!features.hasFeature(Feature.PayToOpenClient)) { "${Feature.PayToOpenClient.rfcName} has been deprecated" }
-        require(!features.hasFeature(Feature.PayToOpenProvider)) { "${Feature.PayToOpenProvider.rfcName} has been deprecated" }
         Features.validateFeatureGraph(features)
         // Verify expiry parameters are consistent with each other.
         require((fulfillSafetyBeforeTimeoutBlocks * 2) < minFinalCltvExpiryDelta) { "min_final_expiry_delta must be at least twice as long as fulfill_safety_before_timeout_blocks" }
@@ -204,7 +199,7 @@ data class NodeParams(
             Feature.Quiescence to FeatureSupport.Mandatory,
             Feature.ChannelType to FeatureSupport.Mandatory,
             Feature.PaymentMetadata to FeatureSupport.Optional,
-            Feature.ExperimentalTrampolinePayment to FeatureSupport.Optional,
+            Feature.TrampolinePayment to FeatureSupport.Optional,
             Feature.ZeroReserveChannels to FeatureSupport.Optional,
             Feature.WakeUpNotificationClient to FeatureSupport.Optional,
             Feature.ChannelBackupClient to FeatureSupport.Optional,

@@ -53,8 +53,9 @@ class FailureMessageTestsCommon : LightningTestSuite() {
             ExpiryTooFar,
             InvalidOnionPayload(561, 1105),
             PaymentTimeout,
-            TrampolineFeeInsufficient,
-            TrampolineExpiryTooSoon
+            TemporaryTrampolineFailure,
+            UnknownNextTrampoline,
+            TrampolineFeeOrExpiryInsufficient(100.msat, 50, CltvExpiryDelta(36))
         )
 
         msgs.forEach {

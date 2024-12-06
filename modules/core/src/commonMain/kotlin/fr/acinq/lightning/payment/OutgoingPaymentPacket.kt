@@ -5,28 +5,35 @@ import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.bitcoin.PublicKey
 import fr.acinq.bitcoin.utils.Either
-import fr.acinq.lightning.CltvExpiry
-import fr.acinq.lightning.Feature
-import fr.acinq.lightning.Lightning
-import fr.acinq.lightning.MilliSatoshi
+import fr.acinq.bitcoin.utils.flatMap
+import fr.acinq.lightning.*
 import fr.acinq.lightning.channel.ChannelCommand
 import fr.acinq.lightning.crypto.sphinx.FailurePacket
-import fr.acinq.lightning.crypto.sphinx.PacketAndSecrets
 import fr.acinq.lightning.crypto.sphinx.Sphinx
 import fr.acinq.lightning.router.NodeHop
+import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.*
+
+/**
+ * Our outgoing payments always use trampoline: there are thus two layers of onion encryption.
+ *
+ * @param packet payment packet that should be included in [UpdateAddHtlc].
+ * @param outerSharedSecrets shared secrets for the outer payment onion.
+ * @param innerSharedSecrets shared secrets for the inner trampoline onion.
+ */
+data class OutgoingPacket(val packet: OnionRoutingPacket, val outerSharedSecrets: List<Sphinx.SharedSecret>, val innerSharedSecrets: List<Sphinx.SharedSecret>)
 
 object OutgoingPaymentPacket {
 
     /**
      * Build an encrypted onion packet from onion payloads and node public keys.
      */
-    fun buildOnion(nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): PacketAndSecrets {
+    fun buildOnion(nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): Sphinx.PacketAndSecrets {
         val sessionKey = Lightning.randomKey()
         return buildOnion(sessionKey, nodes, payloads, associatedData, payloadLength)
     }
 
-    private fun buildOnion(sessionKey: PrivateKey, nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): PacketAndSecrets {
+    fun buildOnion(sessionKey: PrivateKey, nodes: List<PublicKey>, payloads: List<PaymentOnion.PerHopPayload>, associatedData: ByteVector32, payloadLength: Int? = null): Sphinx.PacketAndSecrets {
         require(nodes.size == payloads.size)
         val payloadsBin = payloads.map { it.write() }
         val totalPayloadLength = payloadLength ?: payloadsBin.sumOf { it.size + Sphinx.MacLength }
@@ -42,13 +49,12 @@ object OutgoingPaymentPacket {
      * @param expiry cltv expiry that should be received by the final recipient.
      * @param hop the trampoline hop from the trampoline node to the recipient.
      */
-    fun buildPacketToTrampolineRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment) || invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
+    fun buildPacketToTrampolineRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, OutgoingPacket> {
+        require(invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             val trampolinePayload = PaymentOnion.NodeRelayPayload.create(amount, expiry, hop.nextNodeId)
-            // We may be paying an older version of lightning-kmp that only supports trampoline packets of size 400.
-            buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, finalPayload), invoice.paymentHash, payloadLength = 400)
+            buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, finalPayload), invoice.paymentHash)
         }
         val trampolineAmount = amount + hop.fee(amount)
         val trampolineExpiry = expiry + hop.cltvExpiryDelta
@@ -56,7 +62,53 @@ object OutgoingPaymentPacket {
         val trampolinePaymentSecret = Lightning.randomBytes32()
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)
         val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), invoice.paymentHash, OnionRoutingPacket.PaymentPacketLength)
-        return Triple(trampolineAmount, trampolineExpiry, paymentOnion)
+        return Triple(trampolineAmount, trampolineExpiry, OutgoingPacket(paymentOnion.packet, paymentOnion.sharedSecrets, trampolineOnion.sharedSecrets))
+    }
+
+    /**
+     * Build an encrypted payment onion packet when the final recipient supports trampoline.
+     * We use each hop in the blinded path as a trampoline hop, which doesn't reveal anything to our trampoline node.
+     * From their point of view, they will be relaying a trampoline payment to another trampoline node.
+     * They won't even know that a blinded path is being used.
+     */
+    fun buildPacketToTrampolineRecipient(paymentHash: ByteVector32, amount: MilliSatoshi, expiry: CltvExpiry, path: Bolt12Invoice.Companion.PaymentBlindedContactInfo, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, OutgoingPacket> {
+        require(path.route.route.firstNodeId is EncodedNodeId.WithPublicKey) { "blinded path must provide the introduction node_id" }
+        val (trampolineAmount, trampolineExpiry, trampolineOnion) = run {
+            val blindedAmount = amount + path.paymentInfo.fee(amount)
+            val blindedExpiry = expiry + path.paymentInfo.cltvExpiryDelta
+            val blindedNodes = listOf(path.route.route.firstNodeId.publicKey) + path.route.route.blindedNodeIds.drop(1)
+            val blindedPayloads = when {
+                blindedNodes.size == 1 -> {
+                    val finalPayload = PaymentOnion.FinalPayload.Blinded.create(amount, expiry, path.route.route.encryptedPayloads.last(), path.route.route.firstPathKey)
+                    listOf(finalPayload)
+                }
+                else -> {
+                    val finalPayload = PaymentOnion.FinalPayload.Blinded.create(amount, expiry, path.route.route.encryptedPayloads.last(), pathKey = null)
+                    val intermediatePayloads = path.route.route.encryptedPayloads.drop(1).dropLast(1).map { PaymentOnion.BlindedChannelRelayPayload.create(it, pathKey = null) }
+                    val introductionPayload = PaymentOnion.BlindedChannelRelayPayload.create(path.route.route.encryptedPayloads.first(), path.route.route.firstPathKey)
+                    listOf(introductionPayload) + intermediatePayloads + listOf(finalPayload)
+                }
+            }
+            when {
+                hop.nodeId == path.route.route.firstNodeId.publicKey -> {
+                    // We don't need a trampoline hop to reach the introduction node of their blinded path, because it's our trampoline node.
+                    val trampolineOnion = buildOnion(blindedNodes, blindedPayloads, paymentHash)
+                    Triple(blindedAmount, blindedExpiry, trampolineOnion)
+                }
+                else -> {
+                    // We use our trampoline node to reach the introduction node of their blinded path.
+                    val trampolinePayload = PaymentOnion.NodeRelayPayload.create(blindedAmount, blindedExpiry, blindedNodes.first())
+                    val trampolineOnion = buildOnion(listOf(hop.nodeId) + blindedNodes, listOf(trampolinePayload) + blindedPayloads, paymentHash)
+                    val trampolineAmount = blindedAmount + hop.fee(blindedAmount)
+                    val trampolineExpiry = blindedExpiry + hop.cltvExpiryDelta
+                    Triple(trampolineAmount, trampolineExpiry, trampolineOnion)
+                }
+            }
+        }
+        val trampolinePaymentSecret = Lightning.randomBytes32()
+        val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)
+        val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), paymentHash, OnionRoutingPacket.PaymentPacketLength)
+        return Triple(trampolineAmount, trampolineExpiry, OutgoingPacket(paymentOnion.packet, paymentOnion.sharedSecrets, trampolineOnion.sharedSecrets))
     }
 
     /**
@@ -66,15 +118,15 @@ object OutgoingPaymentPacket {
      * @param amount amount that should be received by the final recipient.
      * @param expiry cltv expiry that should be received by the final recipient.
      */
-    fun buildPacketToTrampolinePeer(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
-        require(invoice.features.hasFeature(Feature.ExperimentalTrampolinePayment) || invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
+    fun buildPacketToTrampolinePeer(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry): Triple<MilliSatoshi, CltvExpiry, OutgoingPacket> {
+        require(invoice.features.hasFeature(Feature.TrampolinePayment)) { "invoice must support trampoline" }
         val trampolineOnion = run {
             val finalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, invoice.paymentMetadata)
             buildOnion(listOf(invoice.nodeId), listOf(finalPayload), invoice.paymentHash)
         }
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(amount, amount, expiry, invoice.paymentSecret, trampolineOnion.packet)
         val paymentOnion = buildOnion(listOf(invoice.nodeId), listOf(payload), invoice.paymentHash, OnionRoutingPacket.PaymentPacketLength)
-        return Triple(amount, expiry, paymentOnion)
+        return Triple(amount, expiry, OutgoingPacket(paymentOnion.packet, paymentOnion.sharedSecrets, trampolineOnion.sharedSecrets))
     }
 
     /**
@@ -88,19 +140,16 @@ object OutgoingPaymentPacket {
      * @param expiry cltv expiry that should be received by the final recipient.
      * @param hop the trampoline hop from the trampoline node to the recipient.
      */
-    fun buildPacketToLegacyRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
+    fun buildPacketToLegacyRecipient(invoice: Bolt11Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, OutgoingPacket> {
         val trampolineOnion = run {
-            // NB: the final payload will never reach the recipient, since the trampoline node will convert that to a legacy payment.
-            // We use the smallest final payload possible, otherwise we may overflow the trampoline onion size.
-            val dummyFinalPayload = PaymentOnion.FinalPayload.Standard.createSinglePartPayload(amount, expiry, invoice.paymentSecret, null)
             var routingInfo = invoice.routingInfo
             var trampolinePayload = PaymentOnion.RelayToNonTrampolinePayload.create(amount, amount, expiry, hop.nextNodeId, invoice, routingInfo)
-            var trampolineOnion = buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, dummyFinalPayload), invoice.paymentHash)
+            var trampolineOnion = buildOnion(listOf(hop.nodeId), listOf(trampolinePayload), invoice.paymentHash)
             // Ensure that this onion can fit inside the outer 1300 bytes onion. The outer onion fields need ~150 bytes and we add some safety margin.
             while (trampolineOnion.packet.payload.size() > 1000) {
                 routingInfo = routingInfo.dropLast(1)
                 trampolinePayload = PaymentOnion.RelayToNonTrampolinePayload.create(amount, amount, expiry, hop.nextNodeId, invoice, routingInfo)
-                trampolineOnion = buildOnion(listOf(hop.nodeId, hop.nextNodeId), listOf(trampolinePayload, dummyFinalPayload), invoice.paymentHash)
+                trampolineOnion = buildOnion(listOf(hop.nodeId), listOf(trampolinePayload), invoice.paymentHash)
             }
             trampolineOnion
         }
@@ -108,7 +157,7 @@ object OutgoingPaymentPacket {
         val trampolineExpiry = expiry + hop.cltvExpiryDelta
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, invoice.paymentSecret, trampolineOnion.packet)
         val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), invoice.paymentHash, OnionRoutingPacket.PaymentPacketLength)
-        return Triple(trampolineAmount, trampolineExpiry, paymentOnion)
+        return Triple(trampolineAmount, trampolineExpiry, OutgoingPacket(paymentOnion.packet, paymentOnion.sharedSecrets, trampolineOnion.sharedSecrets))
     }
 
     /**
@@ -122,7 +171,7 @@ object OutgoingPaymentPacket {
      * @param expiry cltv expiry that should be received by the final recipient.
      * @param hop the trampoline hop from the trampoline node to the recipient.
      */
-    fun buildPacketToBlindedRecipient(invoice: Bolt12Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, PacketAndSecrets> {
+    fun buildPacketToBlindedRecipient(invoice: Bolt12Invoice, amount: MilliSatoshi, expiry: CltvExpiry, hop: NodeHop): Triple<MilliSatoshi, CltvExpiry, OutgoingPacket> {
         val trampolineOnion = run {
             var blindedPaths = invoice.blindedPaths
             var trampolinePayload = PaymentOnion.RelayToBlindedPayload.create(amount, expiry, invoice.features, blindedPaths)
@@ -141,20 +190,39 @@ object OutgoingPaymentPacket {
         val trampolinePaymentSecret = Lightning.randomBytes32()
         val payload = PaymentOnion.FinalPayload.Standard.createTrampolinePayload(trampolineAmount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolineOnion.packet)
         val paymentOnion = buildOnion(listOf(hop.nodeId), listOf(payload), invoice.paymentHash, OnionRoutingPacket.PaymentPacketLength)
-        return Triple(trampolineAmount, trampolineExpiry, paymentOnion)
+        return Triple(trampolineAmount, trampolineExpiry, OutgoingPacket(paymentOnion.packet, paymentOnion.sharedSecrets, trampolineOnion.sharedSecrets))
     }
 
     fun buildHtlcFailure(nodeSecret: PrivateKey, paymentHash: ByteVector32, onion: OnionRoutingPacket, reason: ChannelCommand.Htlc.Settlement.Fail.Reason): Either<FailureMessage, ByteVector> {
-        // we need to decrypt the payment onion to obtain the shared secret to build the error packet
-        return when (val result = Sphinx.peel(nodeSecret, paymentHash, onion)) {
-            is Either.Right -> {
-                val encryptedReason = when (reason) {
-                    is ChannelCommand.Htlc.Settlement.Fail.Reason.Bytes -> FailurePacket.wrap(reason.bytes.toByteArray(), result.value.sharedSecret)
-                    is ChannelCommand.Htlc.Settlement.Fail.Reason.Failure -> FailurePacket.create(result.value.sharedSecret, reason.message)
+        return extractSharedSecrets(nodeSecret, paymentHash, onion).map {
+            val (outerSecret, innerSecret) = it
+            when (innerSecret) {
+                null -> when (reason) {
+                    is ChannelCommand.Htlc.Settlement.Fail.Reason.Bytes -> FailurePacket.wrap(reason.bytes.toByteArray(), outerSecret).toByteVector()
+                    is ChannelCommand.Htlc.Settlement.Fail.Reason.Failure -> FailurePacket.create(outerSecret, reason.message).toByteVector()
                 }
-                Either.Right(ByteVector(encryptedReason))
+                else -> {
+                    // We encrypt with the trampoline onion secret first.
+                    val innerReason = when (reason) {
+                        is ChannelCommand.Htlc.Settlement.Fail.Reason.Bytes -> FailurePacket.wrap(reason.bytes.toByteArray(), innerSecret)
+                        is ChannelCommand.Htlc.Settlement.Fail.Reason.Failure -> FailurePacket.create(innerSecret, reason.message)
+                    }
+                    // And wrap it with the outer payment onion secret.
+                    FailurePacket.wrap(innerReason, outerSecret).toByteVector()
+                }
             }
-            is Either.Left -> Either.Left(result.value)
+        }
+    }
+
+    /** Extract the onion shared secret and if available the trampoline onion shared secret. */
+    private fun extractSharedSecrets(nodeSecret: PrivateKey, paymentHash: ByteVector32, onion: OnionRoutingPacket): Either<FailureMessage, Pair<ByteVector32, ByteVector32?>> {
+        // We decrypt the payment onion to obtain its shared secret.
+        return Sphinx.peel(nodeSecret, paymentHash, onion).flatMap { outer ->
+            // If it contains a trampoline onion, we decrypt it as well to obtain its shared secret.
+            when (val trampolineOnion = PaymentOnion.PerHopPayload.read(outer.payload.toByteArray()).map { it.get<OnionPaymentPayloadTlv.TrampolineOnion>() }.right) {
+                null -> Either.Right(Pair(outer.sharedSecret, null))
+                else -> Sphinx.peel(nodeSecret, paymentHash, trampolineOnion.packet).map { Pair(outer.sharedSecret, it.sharedSecret) }
+            }
         }
     }
 

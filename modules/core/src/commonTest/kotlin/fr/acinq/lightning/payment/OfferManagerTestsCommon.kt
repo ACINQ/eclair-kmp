@@ -6,7 +6,6 @@ import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.crypto.RouteBlinding
-import fr.acinq.lightning.crypto.sphinx.DecryptedPacket
 import fr.acinq.lightning.crypto.sphinx.Sphinx
 import fr.acinq.lightning.io.OfferInvoiceReceived
 import fr.acinq.lightning.io.OfferNotPaid
@@ -38,7 +37,7 @@ class OfferManagerTestsCommon : LightningTestSuite() {
     private fun trampolineRelay(msg: OnionMessage, trampolineKey: PrivateKey): Pair<OnionMessage, Either<ShortChannelId, EncodedNodeId>> {
         val blindedPrivateKey = RouteBlinding.derivePrivateKey(trampolineKey, msg.pathKey)
         val decrypted = Sphinx.peel(blindedPrivateKey, ByteVector.empty, msg.onionRoutingPacket)
-        assertIs<Either.Right<DecryptedPacket>>(decrypted)
+        assertIs<Either.Right<Sphinx.DecryptedPacket>>(decrypted)
         assertFalse(decrypted.value.isLastPacket)
         val message = MessageOnion.read(decrypted.value.payload.toByteArray())
         val (decryptedPayload, nextBlinding) = RouteBlinding.decryptPayload(trampolineKey, msg.pathKey, message.encryptedData).right!!
@@ -95,6 +94,8 @@ class OfferManagerTestsCommon : LightningTestSuite() {
         assertIs<OnionMessageAction.PayInvoice>(payInvoice)
         assertEquals(OfferInvoiceReceived(payOffer, payInvoice.invoice), bobOfferManager.eventsFlow.first())
         assertEquals(payOffer, payInvoice.payOffer)
+        assertTrue(payInvoice.invoice.features.hasFeature(Feature.BasicMultiPartPayment))
+        assertTrue(payInvoice.invoice.features.hasFeature(Feature.TrampolinePayment))
         assertEquals(1, payInvoice.invoice.blindedPaths.size)
         val path = payInvoice.invoice.blindedPaths.first()
         assertEquals(EncodedNodeId(aliceTrampolineKey.publicKey()), path.route.route.firstNodeId)

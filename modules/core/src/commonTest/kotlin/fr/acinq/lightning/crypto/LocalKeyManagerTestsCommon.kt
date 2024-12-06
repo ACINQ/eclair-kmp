@@ -25,15 +25,6 @@ class LocalKeyManagerTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `generate the same legacy node id from the same seed`() {
-        // if this test breaks it means that we will generate a different legacy node id from
-        // the same seed, which could be a problem during migration from legacy to kmp
-        val seed = MnemonicCode.toSeed("sock able evoke work output half bamboo energy simple fiber unhappy afford", passphrase = "").byteVector()
-        val keyManager = LocalKeyManager(seed, Chain.Regtest, TestConstants.aliceSwapInServerXpub)
-        assertEquals(keyManager.nodeKeys.legacyNodeKey.publicKey, PublicKey.fromHex("0388a99397c5a599c4c56ea2b9f938bd2893744a590af7c1f05c9c3ee822c13fdc"))
-    }
-
-    @Test
     fun `generate channel keys`() {
         val seed = ByteVector("aeb3e9b5642cd4523e9e09164047f60adb413633549c3c6189192921311894d501")
         val keyManager = LocalKeyManager(seed, Chain.Regtest, TestConstants.aliceSwapInServerXpub)

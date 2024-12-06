@@ -5,6 +5,7 @@ import fr.acinq.bitcoin.io.ByteArrayInput
 import fr.acinq.bitcoin.io.ByteArrayOutput
 import fr.acinq.bitcoin.io.Output
 import fr.acinq.lightning.CltvExpiry
+import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.utils.toByteVector32
 
@@ -41,10 +42,8 @@ sealed class FailureMessage {
                 UnknownNextPeer.code -> UnknownNextPeer
                 AmountBelowMinimum.code -> AmountBelowMinimum(MilliSatoshi(LightningCodecs.u64(stream)), readChannelUpdate(stream))
                 FeeInsufficient.code -> FeeInsufficient(MilliSatoshi(LightningCodecs.u64(stream)), readChannelUpdate(stream))
-                TrampolineFeeInsufficient.code -> TrampolineFeeInsufficient
                 IncorrectCltvExpiry.code -> IncorrectCltvExpiry(CltvExpiry(LightningCodecs.u32(stream).toLong()), readChannelUpdate(stream))
                 ExpiryTooSoon.code -> ExpiryTooSoon(readChannelUpdate(stream))
-                TrampolineExpiryTooSoon.code -> TrampolineExpiryTooSoon
                 IncorrectOrUnknownPaymentDetails.code -> {
                     val amount = if (stream.availableBytes > 0) MilliSatoshi(LightningCodecs.u64(stream)) else MilliSatoshi(0)
                     val blockHeight = if (stream.availableBytes > 0) LightningCodecs.u32(stream).toLong() else 0L
@@ -56,6 +55,9 @@ sealed class FailureMessage {
                 ExpiryTooFar.code -> ExpiryTooFar
                 InvalidOnionPayload.code -> InvalidOnionPayload(LightningCodecs.bigSize(stream), LightningCodecs.u16(stream))
                 PaymentTimeout.code -> PaymentTimeout
+                TemporaryTrampolineFailure.code -> TemporaryTrampolineFailure
+                TrampolineFeeOrExpiryInsufficient.code -> TrampolineFeeOrExpiryInsufficient(MilliSatoshi(LightningCodecs.u32(stream).toLong()), LightningCodecs.u32(stream), CltvExpiryDelta(LightningCodecs.u16(stream)))
+                UnknownNextTrampoline.code -> UnknownNextTrampoline
                 else -> UnknownFailureMessage(code)
             }
         }
@@ -90,13 +92,11 @@ sealed class FailureMessage {
                     LightningCodecs.writeU64(input.amount.toLong(), out)
                     writeChannelUpdate(input.update, out)
                 }
-                TrampolineFeeInsufficient -> {}
                 is IncorrectCltvExpiry -> {
                     LightningCodecs.writeU32(input.expiry.toLong().toInt(), out)
                     writeChannelUpdate(input.update, out)
                 }
                 is ExpiryTooSoon -> writeChannelUpdate(input.update, out)
-                TrampolineExpiryTooSoon -> {}
                 is IncorrectOrUnknownPaymentDetails -> {
                     LightningCodecs.writeU64(input.amount.toLong(), out)
                     LightningCodecs.writeU32(input.height.toInt(), out)
@@ -114,6 +114,13 @@ sealed class FailureMessage {
                     LightningCodecs.writeU16(input.offset, out)
                 }
                 PaymentTimeout -> {}
+                TemporaryTrampolineFailure -> {}
+                is TrampolineFeeOrExpiryInsufficient -> {
+                    LightningCodecs.writeU32(input.feeBase.toLong().toInt(), out)
+                    LightningCodecs.writeU32(input.feeProportionalMillionths, out)
+                    LightningCodecs.writeU16(input.expiryDelta.toInt(), out)
+                }
+                UnknownNextTrampoline -> {}
                 is UnknownFailureMessage -> {}
             }
         }
@@ -195,10 +202,6 @@ data class FeeInsufficient(val amount: MilliSatoshi, override val update: Channe
     override val message get() = "payment fee was below the minimum required by the channel"
     companion object { const val code = UPDATE or 12 }
 }
-object TrampolineFeeInsufficient : FailureMessage(), Node {
-    override val code get() = NODE or 51
-    override val message get() = "payment fee was below the minimum required by the trampoline node"
-}
 data class IncorrectCltvExpiry(val expiry: CltvExpiry, override val update: ChannelUpdate) : FailureMessage(), Update {
     override val code get() = IncorrectCltvExpiry.code
     override val message get() = "payment expiry doesn't match the value in the onion"
@@ -208,10 +211,6 @@ data class ExpiryTooSoon(override val update: ChannelUpdate) : FailureMessage(),
     override val code get() = ExpiryTooSoon.code
     override val message get() = "payment expiry is too close to the current block height for safe handling by the relaying node"
     companion object { const val code = UPDATE or 14 }
-}
-object TrampolineExpiryTooSoon : FailureMessage(), Node {
-    override val code get() = NODE or 52
-    override val message get() = "payment expiry is too close to the current block height for safe handling by the relaying node"
 }
 data class IncorrectOrUnknownPaymentDetails(val amount: MilliSatoshi, val height: Long) : FailureMessage(), Perm {
     override val code get() = IncorrectOrUnknownPaymentDetails.code
@@ -245,6 +244,19 @@ data class InvalidOnionPayload(val tag: Long, val offset: Int) : FailureMessage(
 data object PaymentTimeout : FailureMessage() {
     override val code get() = 23
     override val message get() = "the complete payment amount was not received within a reasonable time"
+}
+data object TemporaryTrampolineFailure : FailureMessage(), Node {
+    override val code get() = NODE or 25
+    override val message get() = "the trampoline node was unable to relay the payment because of downstream temporary failures"
+}
+data class TrampolineFeeOrExpiryInsufficient(val feeBase: MilliSatoshi, val feeProportionalMillionths: Int, val expiryDelta: CltvExpiryDelta) : FailureMessage(), Node {
+    override val code get() = TrampolineFeeOrExpiryInsufficient.code
+    override val message get() = "trampoline fees or expiry are insufficient to relay the payment"
+    companion object { const val code = NODE or 26 }
+}
+data object UnknownNextTrampoline : FailureMessage(), Perm {
+    override val code get() = PERM or 27
+    override val message get() = "the trampoline node was unable to find the next trampoline node"
 }
 /**
  * We allow remote nodes to send us unknown failure codes (e.g. deprecated failure codes).

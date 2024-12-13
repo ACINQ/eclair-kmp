@@ -134,23 +134,22 @@ class SyncingTestsCommon : LightningTestSuite() {
         assertEquals(channelReestablishBob.nextLocalCommitmentNumber, 0)
 
         val (bob2, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(channelReestablishAlice))
-        val commitSigBob1 = actionsBob2.hasOutgoingMessage<CommitSig>()
-        assertNull(actionsBob2.findOutgoingMessageOpt<TxSignatures>())
+        // Bob is waiting for Alice's commit_sig before sending his tx_signatures.
+        assertTrue(actionsBob2.isEmpty())
 
         val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(channelReestablishBob))
         assertEquals(actionsAlice3.size, 1)
         val commitSigAlice = actionsAlice3.hasOutgoingMessage<CommitSig>()
-        val (alice4, _) = alice3.process(ChannelCommand.MessageReceived(commitSigBob1))
 
         val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(commitSigAlice))
         assertIs<WaitForFundingConfirmed>(bob3.state)
         val txSigsBob = actionsBob3.findOutgoingMessage<TxSignatures>()
 
-        val (alice5, actionsAlice5) = alice4.process(ChannelCommand.MessageReceived(txSigsBob))
-        assertIs<WaitForFundingConfirmed>(alice5.state)
-        val txSigsAlice = actionsAlice5.hasOutgoingMessage<TxSignatures>()
-        actionsAlice5.has<ChannelAction.Storage.StoreState>()
-        assertEquals(actionsAlice5.find<ChannelAction.Blockchain.PublishTx>().tx.txid, fundingTxId)
+        val (alice4, actionsAlice4) = alice3.process(ChannelCommand.MessageReceived(txSigsBob))
+        assertIs<WaitForFundingConfirmed>(alice4.state)
+        val txSigsAlice = actionsAlice4.hasOutgoingMessage<TxSignatures>()
+        actionsAlice4.has<ChannelAction.Storage.StoreState>()
+        assertEquals(actionsAlice4.find<ChannelAction.Blockchain.PublishTx>().tx.txid, fundingTxId)
 
         val (bob4, actionsBob4) = bob3.process(ChannelCommand.MessageReceived(txSigsAlice))
         assertIs<WaitForFundingConfirmed>(bob4.state)
@@ -178,8 +177,7 @@ class SyncingTestsCommon : LightningTestSuite() {
         val txSigsBob = actionsBob3.hasOutgoingMessage<TxSignatures>()
 
         val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(channelReestablishBob))
-        assertEquals(actionsAlice2.size, 1)
-        actionsAlice2.hasOutgoingMessage<CommitSig>()
+        assertTrue(actionsAlice2.isEmpty())
         val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(commitSigBob))
         assertTrue(actionsAlice3.isEmpty())
         val (alice4, actionsAlice4) = alice3.process(ChannelCommand.MessageReceived(txSigsBob))
@@ -213,25 +211,23 @@ class SyncingTestsCommon : LightningTestSuite() {
         val channelReestablishBob = actionsBob3.hasOutgoingMessage<ChannelReestablish>()
         assertEquals(channelReestablishBob.nextFundingTxId, fundingTxId)
         assertEquals(channelReestablishBob.nextLocalCommitmentNumber, 1)
-        actionsBob3.hasOutgoingMessage<CommitSig>()
+        assertNull(actionsBob3.findOutgoingMessageOpt<CommitSig>())
         val txSigsBob = actionsBob3.hasOutgoingMessage<TxSignatures>()
 
         val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(channelReestablishBob))
-        assertEquals(actionsAlice3.size, 1)
-        actionsAlice3.hasOutgoingMessage<CommitSig>()
-        val (alice4, _) = alice3.process(ChannelCommand.MessageReceived(commitSigBob))
+        assertTrue(actionsAlice3.isEmpty())
+        val (alice4, actionsAlice4) = alice3.process(ChannelCommand.MessageReceived(commitSigBob))
+        assertTrue(actionsAlice4.isEmpty())
         val (alice5, actionsAlice5) = alice4.process(ChannelCommand.MessageReceived(txSigsBob))
         assertIs<WaitForFundingConfirmed>(alice5.state)
         val txSigsAlice = actionsAlice5.hasOutgoingMessage<TxSignatures>()
         actionsAlice5.has<ChannelAction.Storage.StoreState>()
         assertEquals(actionsAlice5.find<ChannelAction.Blockchain.PublishTx>().tx.txid, fundingTxId)
 
-        val (bob4, actionsBob4) = bob3.process(ChannelCommand.MessageReceived(commitSigAlice))
-        assertTrue(actionsBob4.isEmpty())
-        val (bob5, actionsBob5) = bob4.process(ChannelCommand.MessageReceived(txSigsAlice))
-        assertIs<WaitForFundingConfirmed>(bob5.state)
-        actionsBob5.has<ChannelAction.Storage.StoreState>()
-        assertEquals(actionsBob5.find<ChannelAction.Blockchain.PublishTx>().tx.txid, fundingTxId)
+        val (bob4, actionsBob4) = bob3.process(ChannelCommand.MessageReceived(txSigsAlice))
+        assertIs<WaitForFundingConfirmed>(bob4.state)
+        actionsBob4.has<ChannelAction.Storage.StoreState>()
+        assertEquals(actionsBob4.find<ChannelAction.Blockchain.PublishTx>().tx.txid, fundingTxId)
     }
 
     @Test
@@ -256,6 +252,8 @@ class SyncingTestsCommon : LightningTestSuite() {
         val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(channelReestablishAlice))
         assertEquals(actionsBob3.size, 1)
         val channelReestablishBob = actionsBob3.hasOutgoingMessage<ChannelReestablish>()
+        assertNull(actionsBob3.findOutgoingMessageOpt<CommitSig>())
+        assertNull(actionsBob3.findOutgoingMessageOpt<TxSignatures>())
         assertEquals(channelReestablishBob.nextFundingTxId, fundingTxId)
         assertEquals(channelReestablishBob.nextLocalCommitmentNumber, 1)
 
@@ -321,16 +319,15 @@ class SyncingTestsCommon : LightningTestSuite() {
         val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(channelReestablishAlice))
         assertIs<WaitForFundingConfirmed>(bob3.state)
         assertEquals(bob3.state.rbfStatus, RbfStatus.None)
-        assertEquals(actionsBob3.size, 3)
+        assertEquals(actionsBob3.size, 2)
         val channelReestablishBob = actionsBob3.hasOutgoingMessage<ChannelReestablish>()
         assertEquals(channelReestablishBob.nextFundingTxId, rbfFundingTxId)
         assertEquals(channelReestablishBob.nextLocalCommitmentNumber, 1)
-        actionsBob3.hasOutgoingMessage<CommitSig>()
+        assertNull(actionsBob3.findOutgoingMessageOpt<CommitSig>())
         val txSigsBob = actionsBob3.hasOutgoingMessage<TxSignatures>()
 
         val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(channelReestablishBob))
-        assertEquals(actionsAlice3.size, 1)
-        actionsAlice3.hasOutgoingMessage<CommitSig>()
+        assertTrue(actionsAlice3.isEmpty())
 
         val (bob4, actionsBob4) = bob3.process(ChannelCommand.MessageReceived(commitSigAlice))
         assertIs<WaitForFundingConfirmed>(bob4.state)

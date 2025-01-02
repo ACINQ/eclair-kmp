@@ -261,7 +261,7 @@ data class Normal(
                         }
                     }
                     is ChannelUpdate -> {
-                        if (cmd.message.shortChannelId == shortChannelId && cmd.message.isRemote(staticParams.nodeParams.nodeId, staticParams.remoteNodeId)) {
+                        if (cmd.message.isRemote(staticParams.nodeParams.nodeId, staticParams.remoteNodeId)) {
                             val nextState = this@Normal.copy(remoteChannelUpdate = cmd.message)
                             Pair(nextState, listOf(ChannelAction.Storage.StoreState(nextState)))
                         } else {
@@ -929,6 +929,9 @@ data class Normal(
         commitments.latest.localFundingStatus is LocalFundingStatus.UnconfirmedFundingTx && commitments.latest.localFundingStatus.sharedTx is PartiallySignedSharedTransaction -> commitments.latest.localFundingStatus.txId
         else -> null
     }
+
+    /** Returns true if the [shortChannelId] matches one of our commitments or our alias. */
+    fun matchesShortChannelId(shortChannelId: ShortChannelId): Boolean = shortChannelId == this.shortChannelId || this.commitments.resolveCommitment(shortChannelId) != null
 
     private fun ChannelContext.handleCommandResult(command: ChannelCommand, result: Either<ChannelException, Pair<Commitments, LightningMessage>>, commit: Boolean): Pair<ChannelState, List<ChannelAction>> {
         return when (result) {

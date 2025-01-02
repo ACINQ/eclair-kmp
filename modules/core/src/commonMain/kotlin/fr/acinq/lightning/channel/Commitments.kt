@@ -7,6 +7,7 @@ import fr.acinq.bitcoin.utils.Try
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Feature
 import fr.acinq.lightning.MilliSatoshi
+import fr.acinq.lightning.ShortChannelId
 import fr.acinq.lightning.blockchain.fee.FeeratePerByte
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.blockchain.fee.FeerateTolerance
@@ -16,7 +17,7 @@ import fr.acinq.lightning.crypto.Bolt3Derivation.deriveForCommitment
 import fr.acinq.lightning.crypto.Bolt3Derivation.deriveForRevocation
 import fr.acinq.lightning.crypto.KeyManager
 import fr.acinq.lightning.crypto.ShaChain
-import fr.acinq.lightning.logging.*
+import fr.acinq.lightning.logging.MDCLogger
 import fr.acinq.lightning.payment.OutgoingPaymentPacket
 import fr.acinq.lightning.transactions.CommitmentSpec
 import fr.acinq.lightning.transactions.Transactions
@@ -190,7 +191,7 @@ sealed class LocalFundingStatus {
         override val fee: Satoshi = sharedTx.tx.fees
     }
 
-    data class ConfirmedFundingTx(override val signedTx: Transaction, override val fee: Satoshi, val localSigs: TxSignatures) : LocalFundingStatus() {
+    data class ConfirmedFundingTx(override val signedTx: Transaction, override val fee: Satoshi, val localSigs: TxSignatures, val shortChannelId: ShortChannelId) : LocalFundingStatus() {
         override val txId: TxId = signedTx.txid
     }
 }
@@ -209,6 +210,10 @@ data class Commitment(
 ) {
     val commitInput = localCommit.publishableTxs.commitTx.input
     val fundingTxId: TxId = commitInput.outPoint.txid
+    val shortChannelId: ShortChannelId? = when (localFundingStatus) {
+        is LocalFundingStatus.ConfirmedFundingTx -> localFundingStatus.shortChannelId
+        else -> null
+    }
     val fundingAmount: Satoshi = commitInput.txOut.amount
 
     fun localChannelReserve(params: ChannelParams): Satoshi = when {
@@ -886,13 +891,14 @@ data class Commitments(
             } else c
         }
 
-    fun ChannelContext.updateLocalFundingConfirmed(fundingTx: Transaction): Either<Commitments, Pair<Commitments, Commitment>> =
+    fun ChannelContext.updateLocalFundingConfirmed(fundingTx: Transaction, blockHeight: Int, txIndex: Int): Either<Commitments, Pair<Commitments, Commitment>> =
         updateFundingStatus(fundingTx.txid) { c: Commitment, _: Long ->
             if (c.fundingTxId == fundingTx.txid) {
                 when (c.localFundingStatus) {
                     is LocalFundingStatus.UnconfirmedFundingTx -> {
                         logger.debug { "setting localFundingStatus confirmed for fundingTxId=${fundingTx.txid}" }
-                        c.copy(localFundingStatus = LocalFundingStatus.ConfirmedFundingTx(fundingTx, c.localFundingStatus.sharedTx.tx.fees, c.localFundingStatus.sharedTx.localSigs))
+                        val shortChannelId = ShortChannelId(blockHeight, txIndex, c.commitInput.outPoint.index.toInt())
+                        c.copy(localFundingStatus = LocalFundingStatus.ConfirmedFundingTx(fundingTx, c.localFundingStatus.sharedTx.tx.fees, c.localFundingStatus.sharedTx.localSigs, shortChannelId))
                     }
                     is LocalFundingStatus.ConfirmedFundingTx -> c
                 }
@@ -967,6 +973,11 @@ data class Commitments(
                 copy(inactive = inactive - pruned.toSet())
             }
         }
+    }
+
+    /** Find the corresponding commitment based on its short_channel_id (once funding transaction is confirmed). */
+    fun resolveCommitment(shortChannelId: ShortChannelId): Commitment? {
+        return all.find { commitment -> commitment.shortChannelId == shortChannelId }
     }
 
     /**

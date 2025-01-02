@@ -588,12 +588,24 @@ object Deserialization {
                 // We previously didn't store the tx_signatures after the transaction was confirmed.
                 // It is only used to be retransmitted on reconnection if our peer had not received it.
                 // This happens very rarely in practice, so putting dummy values here shouldn't be an issue.
-                localSigs = TxSignatures(ByteVector32.Zeroes, TxId(ByteVector32.Zeroes), listOf())
+                localSigs = TxSignatures(ByteVector32.Zeroes, TxId(ByteVector32.Zeroes), listOf()),
+                // We previously didn't store the short_channel_id in the commitment object.
+                // We will fetch the funding transaction on restart to set it to the correct value.
+                shortChannelId = ShortChannelId(0),
             )
             0x02 -> LocalFundingStatus.ConfirmedFundingTx(
                 signedTx = readTransaction(),
                 fee = readNumber().sat,
-                localSigs = readLightningMessage() as TxSignatures
+                localSigs = readLightningMessage() as TxSignatures,
+                // We previously didn't store the short_channel_id in the commitment object.
+                // We will fetch the funding transaction on restart to set it to the correct value.
+                shortChannelId = ShortChannelId(0),
+            )
+            0x03 -> LocalFundingStatus.ConfirmedFundingTx(
+                signedTx = readTransaction(),
+                fee = readNumber().sat,
+                localSigs = readLightningMessage() as TxSignatures,
+                shortChannelId = ShortChannelId(readNumber())
             )
             else -> error("unknown discriminator $discriminator for class ${LocalFundingStatus::class}")
         },

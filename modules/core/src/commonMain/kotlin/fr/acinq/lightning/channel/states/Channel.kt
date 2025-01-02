@@ -357,7 +357,7 @@ sealed class ChannelStateWithCommitments : PersistedChannelState() {
     internal fun ChannelContext.acceptFundingTxConfirmed(w: WatchEventConfirmed): Either<Commitments, Triple<Commitments, Commitment, List<ChannelAction>>> {
         logger.info { "funding txid=${w.tx.txid} was confirmed at blockHeight=${w.blockHeight} txIndex=${w.txIndex}" }
         return commitments.run {
-            updateLocalFundingConfirmed(w.tx).map { (commitments1, commitment) ->
+            updateLocalFundingConfirmed(w.tx, w.blockHeight, w.txIndex).map { (commitments1, commitment) ->
                 val watchSpent = WatchSpent(channelId, commitment.fundingTxId, commitment.commitInput.outPoint.index.toInt(), commitment.commitInput.txOut.publicKeyScript, BITCOIN_FUNDING_SPENT)
                 val actions = buildList {
                     newlyLocked(commitments, commitments1).forEach { add(ChannelAction.Storage.SetLocked(it.fundingTxId)) }

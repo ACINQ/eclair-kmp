@@ -692,7 +692,8 @@ class Peer(
         val res = CompletableDeferred<SendPaymentResult>()
         val paymentId = UUID.randomUUID()
         this.launch {
-            res.complete(eventsFlow
+            res.complete(
+                eventsFlow
                 .filterIsInstance<SendPaymentResult>()
                 .filter { it.request.paymentId == paymentId }
                 .first()
@@ -706,7 +707,8 @@ class Peer(
         val res = CompletableDeferred<SendPaymentResult>()
         val paymentId = UUID.randomUUID()
         this.launch {
-            res.complete(eventsFlow
+            res.complete(
+                eventsFlow
                 .filterIsInstance<SendPaymentResult>()
                 .filter { it.request.paymentId == paymentId }
                 .first()
@@ -1194,7 +1196,7 @@ class Peer(
                         }
                     }
                     is ChannelUpdate -> {
-                        _channels.values.filterIsInstance<Normal>().find { it.shortChannelId == msg.shortChannelId }?.let { state ->
+                        _channels.values.filterIsInstance<Normal>().find { it.matchesShortChannelId(msg.shortChannelId) }?.let { state ->
                             val event1 = ChannelCommand.MessageReceived(msg)
                             val (state1, actions) = state.process(event1)
                             processActions(state.channelId, peerConnection, actions)

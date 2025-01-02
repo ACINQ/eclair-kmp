@@ -6,7 +6,6 @@ import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Feature
 import fr.acinq.lightning.Lightning.randomBytes32
-import fr.acinq.lightning.ShortChannelId
 import fr.acinq.lightning.blockchain.*
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.*
@@ -1499,15 +1498,10 @@ class NormalTestsCommon : LightningTestSuite() {
         assertEquals(bob1.state.remoteChannelUpdate, aliceUpdate)
         actions1.has<ChannelAction.Storage.StoreState>()
 
-        val aliceUpdateOtherChannel = Announcements.makeChannelUpdate(alice.staticParams.nodeParams.chainHash, alice.ctx.privateKey, alice.staticParams.remoteNodeId, ShortChannelId(7), CltvExpiryDelta(12), 1.msat, 10.msat, 50, 15_000.msat)
-        val (bob2, actions2) = bob1.process(ChannelCommand.MessageReceived(aliceUpdateOtherChannel))
+        val bobUpdate = Announcements.makeChannelUpdate(bob.staticParams.nodeParams.chainHash, bob.ctx.privateKey, bob.staticParams.remoteNodeId, bob.state.shortChannelId, CltvExpiryDelta(24), 1.msat, 5.msat, 10, 125_000.msat)
+        val (bob2, actions2) = bob1.process(ChannelCommand.MessageReceived(bobUpdate))
         assertEquals(bob1, bob2)
         assertTrue(actions2.isEmpty())
-
-        val bobUpdate = Announcements.makeChannelUpdate(bob.staticParams.nodeParams.chainHash, bob.ctx.privateKey, bob.staticParams.remoteNodeId, bob.state.shortChannelId, CltvExpiryDelta(24), 1.msat, 5.msat, 10, 125_000.msat)
-        val (bob3, actions3) = bob2.process(ChannelCommand.MessageReceived(bobUpdate))
-        assertEquals(bob1, bob3)
-        assertTrue(actions3.isEmpty())
     }
 
     @Test

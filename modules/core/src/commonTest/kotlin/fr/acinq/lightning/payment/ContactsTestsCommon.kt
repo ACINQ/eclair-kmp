@@ -8,6 +8,8 @@ import fr.acinq.lightning.wire.OfferTypes
 import fr.acinq.lightning.wire.TlvStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class ContactsTestsCommon : LightningTestSuite() {
 
@@ -35,6 +37,9 @@ class ContactsTestsCommon : LightningTestSuite() {
             assertEquals("810641fab614f8bc1441131dc50b132fd4d1e2ccd36f84b887bbab3a6d8cc3d8", contactSecretAlice.primarySecret.toHex())
             val contactSecretBob = Contacts.computeContactSecret(bobOfferAndKey, aliceOfferAndKey.offer)
             assertEquals(contactSecretAlice, contactSecretBob)
+            val payerAddress = UnverifiedContactAddress(ContactAddress.fromString("bob@acinq.co")!!, bobOfferAndKey.privateKey.publicKey())
+            assertTrue(payerAddress.verify(bobOfferAndKey.offer))
+            assertFalse(payerAddress.verify(aliceOfferAndKey.offer))
         }
         run {
             // The remote offer contains an issuer_id and a blinded path.
@@ -53,7 +58,8 @@ class ContactsTestsCommon : LightningTestSuite() {
             assertEquals("4e0aa72cc42eae9f8dc7c6d2975bbe655683ada2e9abfdfe9f299d391ed9736c", contactSecretAlice.primarySecret.toHex())
             val contactSecretBob = Contacts.computeContactSecret(OfferTypes.OfferAndKey(bobOffer, issuerKey), aliceOfferAndKey.offer)
             assertEquals(contactSecretAlice, contactSecretBob)
-
+            val payerAddress = UnverifiedContactAddress(ContactAddress.fromString("bob@acinq.co")!!, issuerKey.publicKey())
+            assertTrue(payerAddress.verify(bobOffer))
         }
     }
 

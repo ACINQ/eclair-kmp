@@ -12,6 +12,7 @@ import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.logging.MDCLogger
 import fr.acinq.lightning.payment.Bolt12Invoice
 import fr.acinq.lightning.payment.ContactAddress
+import fr.acinq.lightning.payment.UnverifiedContactAddress
 import fr.acinq.lightning.tests.TestConstants
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.tests.utils.testLoggerFactory
@@ -24,6 +25,7 @@ import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestChain
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestContactSecret
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestMetadata
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestPayerAddress
+import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestPayerAddressSignature
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestPayerId
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestPayerOffer
 import fr.acinq.lightning.wire.OfferTypes.InvoiceRequestQuantity
@@ -221,12 +223,14 @@ class OfferTypesTestsCommon : LightningTestSuite() {
         val tlvsWithoutSignature = setOf(
             InvoiceRequestMetadata(ByteVector.fromHex("abcdef")),
             OfferIssuerId(nodeId),
+            InvoiceRequestAmount(42.msat),
             InvoiceRequestPayerId(payerKey.publicKey()),
         )
         val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithoutSignature)), payerKey)
         val tlvs = tlvsWithoutSignature + Signature(signature)
         val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
-        val encoded = "lnr1qqp6hn00zcssxr0juddeytv7nwawhk9nq9us0arnk8j8wnsq8r2e86vzgtfneupetqssynwewhp70gwlp4chhm53g90jt9fpnx7rpmrzla3zd0nvxymm8e0p7pq06rwacy8756zgl3hdnsyfepq573astyz94rgn9uhxlyqj4gdyk6q8q0yrv6al909v3435amuvjqvkuq6k8fyld78r8srdyx7wnmwsdu"
+        assertTrue(invoiceRequest.isValid())
+        val encoded = "lnr1qqp6hn00zcssxr0juddeytv7nwawhk9nq9us0arnk8j8wnsq8r2e86vzgtfneupe2gqj5kppqfxajawru7sa7rt300hfzs2lyk2jrxduxrkx9lmzy6lxcvfhk0j7ruzq3ue5pwwxhwlacj6sp535wxlzsj3elzx7vl40xvsgs7ha04twwewh08sprucqs8smfjgcclvwl9hzps5ap3ugzphvkey70dwkgwu6xhq"
         assertEquals(encoded, invoiceRequest.encode())
         assertEquals(invoiceRequest, InvoiceRequest.decode(encoded).get())
         assertNull(invoiceRequest.offer.amount)
@@ -244,32 +248,110 @@ class OfferTypesTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `invoice request with contact info`() {
+    fun `invoice request with contact offer`() {
         val payerKey = PrivateKey.fromHex("80803163f4c8422f492ca6a03f5a6ed116a313ebcf9b2c794249a30221e87313")
         val contactSecret = ByteVector32.fromValidHex("f6b50c250267c2f4b03461f4a8beee114a2e628623a18cda9a54bd7348cf0084")
         val payerOffer = Offer.decode("lno1qgsyxjtl6luzd9t3pr62xr7eemp6awnejusgf6gw45q75vcfqqqqqqqsespexwyy4tcadvgg89l9aljus6709kx235hhqrk6n8dey98uyuftzdqzs0wvvqg8lcu47r8kvwpyqevldjvlg7cm0tnzgydz6efr3laa58pqyqht6e54gm2guqsn87mkcneuwh77fxvpmt3akr7u7n90smpudwwhlsqrxglas7t0reqx3e0jwhkr7kwsalpw5txpwdw7lf0rl8vux48ndl6p9u72u3m0kflm8k9nq6jrsu6meftjn0gzxjn3um7hgw8qrs5nrq846dv6yulaccrljdracc73xmujg9k4zc0sqyy2my822usupn2yzpynpcta5dlx").get()
-        val payerAddress = ContactAddress("phoenix", "acinq.co")
         val tlvsWithoutSignature = setOf(
             InvoiceRequestMetadata(ByteVector.fromHex("a37561651a82fbd68b9c243595f45a9bbb6a906808608497842deb0e24588d61")),
             OfferIssuerId(nodeId),
+            InvoiceRequestAmount(42.msat),
             InvoiceRequestPayerId(payerKey.publicKey()),
             InvoiceRequestContactSecret(contactSecret),
             InvoiceRequestPayerOffer(payerOffer),
-            InvoiceRequestPayerAddress(payerAddress),
         )
         val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithoutSignature)), payerKey)
         val tlvs = tlvsWithoutSignature + Signature(signature)
         val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
-        val encoded = "lnr1qqs2xatpv5dg977k3wwzgdv473dfhwm2jp5qscyyj7zzm6cwy3vg6cgkyypsmuhrtwfzm85mht4a3vcp0yrlgua3u3m5uqpc6kf7nqjz6v70qw2cyyp83yerha06wcwlyw670yxv602sg5j0mw6de0px4kx3z2guzst3tfhsgqcvnnlakywy2ft5ra04m72qxnwzxs7mn3r22k5haj5dx69jch98dc23dx0j0xw48xpxtsngmhwzfm32gce2reygm6eycva7x9qqmfvalemntxkpyrmt2rp9qfnu9a9sx3slf297acg55tnzsc36rrx6nf2t6u6geuqgflnhxkdv8uqzypp5jl7hlqnf2ugg7j3slkwwcwht57vhyzzwjr4dq84rxzgqqqqqqyxvqwfn3p9278ttzzpe0e00uhyxhned3j5d9acqak5emwfpflp8z2cngq5rmnrqzpl7890seanrsfqxt8mvn868kxm6ucjprgkk2gu0l0dpcgpq967kd92x6j8qyyelkaky70r4lhjfnqw6u0dslh85etuxc0rtn4luqqej8lv8jmc7gp5wtun4asl4n580ct4zestnthh6tclem8p4fum07sf08jhywmaj07ea3vcx5su8xk722u5m6q355u0xl46r3cqu9yccpawntx388lwxqlunglwx85fklyjpd4gkruqppzkep6jhy8qv63qsfycwzldr0eh7wu6e43g3qacxsmm9de5hszrpvd5kuufwvdhs"
+        assertTrue(invoiceRequest.isValid())
+        val encoded = "lnr1qqs2xatpv5dg977k3wwzgdv473dfhwm2jp5qscyyj7zzm6cwy3vg6cgkyypsmuhrtwfzm85mht4a3vcp0yrlgua3u3m5uqpc6kf7nqjz6v70qw2jqy49sggz0zfj806l5asa7ga4u7gve574q3fylka5mj7zdtvdzy53c9qhzkn0qs93m9w9x074k0260mhepwldegvk738ec3f0l7hzmfec0rrqw2500vvknq7azzdcgjvr75w9hflp9q53ufu02vkzx90mlxmtz6jw4k0z0lnhxkdvzg8kk5xz2qn8ct6tqdrp7j5tams3fghx9p3r5xxd4xj5h4e53ncqsnl8wdv6c0cqygzrf9la07pxj4cs3a9rplvuasawhfuewgyyay826q02xvysqqqqqqgvcqun8zz24uwkkyyrjlj7lewgd08jmr9g6tmspmdfnkujzn7zwy43xspg8hxxqyrluw2lpnmx8qjqvk0kex050vdh4e3yzx3dv53cl776rsszqt4av625d4ywqgfnldmvfu78tl0ynxqa4c7mplw0fjhcds7xh8tlcqpny07c09h3usrguhe8tmplt8gwlsh29nqhxh005h3lnkwr2neklaqj709wgahmylanmzesdfpcwddu54efh5prffc7dlt58rspc2f3sr6axkdzw07uvplex37uv0gnd7fyzm23v8cqzz9djr49wgwqe4zpqjfsu976xlnq"
         assertEquals(encoded, invoiceRequest.encode())
         assertEquals(invoiceRequest, InvoiceRequest.decode(encoded).get())
-        assertNull(invoiceRequest.offer.amount)
-        assertNull(invoiceRequest.offer.description)
         assertEquals(nodeId, invoiceRequest.offer.issuerId)
         assertEquals(payerKey.publicKey(), invoiceRequest.payerId)
         assertEquals(contactSecret, invoiceRequest.contactSecret)
         assertEquals(payerOffer, invoiceRequest.payerOffer)
-        assertEquals(payerAddress, invoiceRequest.payerAddress)
+    }
+
+    @Test
+    fun `invoice request with contact address`() {
+        val payerKey = PrivateKey.fromHex("bc8c43b545f07b95a57577a4725065a657fa4831cb95d910970a50eb88949a7e")
+        val payerAddress = ContactAddress("phoenix", "acinq.co")
+        val payerOfferKey = PrivateKey.fromHex("2eb661efb156b9fd7f4b8cf3b13cd6ed809d18cf6a38b593ff8d8ec9be2a4db5")
+        val contactSecret = ByteVector32.fromValidHex("ff2b76ecb569c37ec9090ca54f4b933b0186ee48eab43bb40e17af4d8770a4e9")
+        val tlvsWithoutSignature = setOf(
+            InvoiceRequestMetadata(ByteVector.fromHex("a37561651a82fbd68b9c243595f45a9bbb6a906808608497842deb0e24588d61")),
+            OfferIssuerId(nodeId),
+            InvoiceRequestAmount(42.msat),
+            InvoiceRequestPayerId(payerKey.publicKey()),
+            InvoiceRequestContactSecret(contactSecret),
+            InvoiceRequestPayerAddress(payerAddress),
+        )
+        val tlvsWithPayerSignature = run {
+            val signatureTag = ByteVector(("lightning" + "invoice_request" + "invreq_payer_bip_353_signature").encodeToByteArray())
+            val signature = signSchnorr(signatureTag, rootHash(TlvStream(tlvsWithoutSignature)), payerOfferKey)
+            tlvsWithoutSignature + InvoiceRequestPayerAddressSignature(payerOfferKey.publicKey(), signature)
+        }
+        val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithPayerSignature)), payerKey)
+        val tlvs = tlvsWithPayerSignature + Signature(signature)
+        val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
+        assertTrue(invoiceRequest.isValid())
+        val encoded = "lnr1qqs2xatpv5dg977k3wwzgdv473dfhwm2jp5qscyyj7zzm6cwy3vg6cgkyypsmuhrtwfzm85mht4a3vcp0yrlgua3u3m5uqpc6kf7nqjz6v70qw2jqy49sggrsehtg7l3jphg6z9mymtz7vrun08h7y40nr3cfqytdswkmax83nc0qs9agk3m5459qfcj566q2hjmla5vvguasm8rvgch64had2gxkqttpzvx360kyvyav4l0gvxlqd5rmjm99shhyazvt26qzn7t4g4g2cfgmlnhxkdvzg8l9dmwedtfcdlvjzgv5485hyemqxrwuj82ksamgrsh4axcwu9ya8l8wdv6c5gswurgdajku6tcppskx6twwyhxxml7wu6e43mpqgjyrc6tvlnz8j96sfh0redhhykftsmu88mtqnlkk79uz5lwjhujn7tyga42vxqfw3qhrc338p694334cktpw5fkkl26xale4uhslhh2aq4cjrfdxp279m44q3k96ly54m6lquwqm9ndfffwyc8ru53d6djq"
+        assertEquals(encoded, invoiceRequest.encode())
+        assertEquals(invoiceRequest, InvoiceRequest.decode(encoded).get())
+        assertEquals(nodeId, invoiceRequest.offer.issuerId)
+        assertEquals(payerKey.publicKey(), invoiceRequest.payerId)
+        assertEquals(contactSecret, invoiceRequest.contactSecret)
+        assertEquals(UnverifiedContactAddress(payerAddress, payerOfferKey.publicKey()), invoiceRequest.payerAddress)
+    }
+
+    @Test
+    fun `invoice request with invalid contact address`() {
+        val payerKey = randomKey()
+        val payerOfferKey = randomKey()
+        val tlvsWithoutSignature = setOf(
+            InvoiceRequestMetadata(ByteVector.fromHex("a37561651a82fbd68b9c243595f45a9bbb6a906808608497842deb0e24588d61")),
+            OfferIssuerId(nodeId),
+            InvoiceRequestAmount(42.msat),
+            InvoiceRequestPayerId(payerKey.publicKey()),
+            InvoiceRequestContactSecret(randomBytes32()),
+            InvoiceRequestPayerAddress(ContactAddress.fromString("alice@phoenix.co")!!),
+        )
+
+        fun signWithPayerOfferKey(tag: ByteVector, priv: PrivateKey): Set<InvoiceRequestTlv> {
+            val signature = signSchnorr(tag, rootHash(TlvStream(tlvsWithoutSignature)), priv)
+            return tlvsWithoutSignature + InvoiceRequestPayerAddressSignature(payerOfferKey.publicKey(), signature)
+        }
+
+        run {
+            val tlvsWithPayerSignature = signWithPayerOfferKey(ByteVector(("lightning" + "invoice_request" + "invreq_payer_bip_353_signature").encodeToByteArray()), payerOfferKey)
+            val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithPayerSignature)), payerKey)
+            val tlvs = tlvsWithPayerSignature + Signature(signature)
+            val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
+            assertTrue(invoiceRequest.isValid())
+        }
+        run {
+            val tlvsWithInvalidPayerSignatureTag = signWithPayerOfferKey(ByteVector(("lightning" + "invoice_request" + "signature").encodeToByteArray()), payerOfferKey)
+            val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithInvalidPayerSignatureTag)), payerKey)
+            val tlvs = tlvsWithInvalidPayerSignatureTag + Signature(signature)
+            val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
+            assertFalse(invoiceRequest.isValid())
+        }
+        run {
+            val tlvsWithInvalidPayerSignature = signWithPayerOfferKey(ByteVector(("lightning" + "invoice_request" + "invreq_payer_bip_353_signature").encodeToByteArray()), randomKey())
+            val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithInvalidPayerSignature)), payerKey)
+            val tlvs = tlvsWithInvalidPayerSignature + Signature(signature)
+            val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
+            assertFalse(invoiceRequest.isValid())
+        }
+        run {
+            // Missing payer address signature.
+            val signature = signSchnorr(InvoiceRequest.signatureTag, rootHash(TlvStream(tlvsWithoutSignature)), payerKey)
+            val tlvs = tlvsWithoutSignature + Signature(signature)
+            val invoiceRequest = InvoiceRequest(TlvStream(tlvs))
+            assertTrue(invoiceRequest.isValid())
+            assertNull(invoiceRequest.payerAddress)
+        }
     }
 
     @Test

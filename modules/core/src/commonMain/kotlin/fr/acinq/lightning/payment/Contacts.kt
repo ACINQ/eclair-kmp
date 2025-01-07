@@ -2,6 +2,7 @@ package fr.acinq.lightning.payment
 
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto
+import fr.acinq.bitcoin.PublicKey
 import fr.acinq.bitcoin.byteVector32
 import fr.acinq.lightning.wire.OfferTypes
 import io.ktor.utils.io.core.*
@@ -27,6 +28,26 @@ data class ContactAddress(val name: String, val domain: String) {
             }
         }
     }
+}
+
+/**
+ * When we receive an invoice_request containing a contact address, we don't immediately fetch the offer from
+ * the BIP 353 address, because this could otherwise be used as a DoS vector since we haven't received a payment yet.
+ *
+ * After receiving the payment, we resolve the BIP 353 address to store the contact.
+ * In the invoice_request, they committed to the signing key used for their offer.
+ * We verify that the offer uses this signing key, otherwise the BIP 353 address most likely doesn't belong to them.
+ */
+data class UnverifiedContactAddress(val address: ContactAddress, val expectedOfferSigningKey: PublicKey) {
+    /**
+     * Verify that the offer obtained by resolving the BIP 353 address matches the invoice_request commitment.
+     * If this returns false, it means that either:
+     *  - the contact address doesn't belong to the node
+     *  - or they changed the signing key of the offer associated with their BIP 353 address
+     * Since the second case should be very infrequent, it's more likely that the remote node is malicious
+     * and we shouldn't store them in our contacts list.
+     */
+    fun verify(offer: OfferTypes.Offer): Boolean = expectedOfferSigningKey == offer.issuerId || (offer.paths?.map { it.nodeId }?.toSet() ?: setOf()).contains(expectedOfferSigningKey)
 }
 
 /**

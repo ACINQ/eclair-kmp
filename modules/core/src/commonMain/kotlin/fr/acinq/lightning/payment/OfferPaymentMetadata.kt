@@ -118,7 +118,7 @@ sealed class OfferPaymentMetadata {
         val quantity: Long,
         val contactSecret: ByteVector32?,
         val payerOffer: OfferTypes.Offer?,
-        val payerAddress: ContactAddress?,
+        val payerAddress: UnverifiedContactAddress?,
         override val createdAtMillis: Long
     ) : OfferPaymentMetadata() {
         override val version: Byte get() = 2
@@ -131,6 +131,16 @@ sealed class OfferPaymentMetadata {
             }
         }
 
+        private fun writeOptionalContactAddress(payerAddress: UnverifiedContactAddress?, out: Output) = when (payerAddress) {
+            null -> LightningCodecs.writeU16(0, out)
+            else -> {
+                val address = payerAddress.address.toString().encodeToByteArray()
+                LightningCodecs.writeU16(address.size + 33, out)
+                LightningCodecs.writeBytes(address, out)
+                LightningCodecs.writeBytes(payerAddress.expectedOfferSigningKey.value, out)
+            }
+        }
+
         fun write(out: Output) {
             LightningCodecs.writeBytes(offerId, out)
             LightningCodecs.writeU64(amount.toLong(), out)
@@ -140,7 +150,7 @@ sealed class OfferPaymentMetadata {
             LightningCodecs.writeU64(quantity, out)
             writeOptionalBytes(contactSecret?.toByteArray(), out)
             writeOptionalBytes(payerOffer?.let { OfferTypes.Offer.tlvSerializer.write(it.records) }, out)
-            writeOptionalBytes(payerAddress?.toString()?.encodeToByteArray(), out)
+            writeOptionalContactAddress(payerAddress, out)
             LightningCodecs.writeU64(createdAtMillis, out)
         }
 
@@ -148,6 +158,14 @@ sealed class OfferPaymentMetadata {
             private fun readOptionalBytes(input: Input): ByteArray? = when (val size = LightningCodecs.u16(input)) {
                 0 -> null
                 else -> LightningCodecs.bytes(input, size)
+            }
+
+            private fun readOptionalContactAddress(input: Input): UnverifiedContactAddress? = when (val size = LightningCodecs.u16(input)) {
+                0 -> null
+                else -> ContactAddress.fromString(LightningCodecs.bytes(input, size - 33).decodeToString())?.let { address ->
+                    val offerKey = PublicKey(LightningCodecs.bytes(input, 33))
+                    UnverifiedContactAddress(address, offerKey)
+                }
             }
 
             fun read(input: Input): V2 {
@@ -159,7 +177,7 @@ sealed class OfferPaymentMetadata {
                 val quantity = LightningCodecs.u64(input)
                 val contactSecret = readOptionalBytes(input)?.byteVector32()
                 val payerOffer = readOptionalBytes(input)?.let { OfferTypes.Offer.tlvSerializer.read(it) }?.let { OfferTypes.Offer(it) }
-                val payerAddress = readOptionalBytes(input)?.decodeToString()?.let { ContactAddress.fromString(it) }
+                val payerAddress = readOptionalContactAddress(input)
                 val createdAtMillis = LightningCodecs.u64(input)
                 return V2(offerId, amount, preimage, payerKey, payerNote, quantity, contactSecret, payerOffer, payerAddress, createdAtMillis)
             }

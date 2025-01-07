@@ -77,7 +77,7 @@ class OfferPaymentMetadataTestsCommon {
     }
 
     @Test
-    fun `encode - decode v2 metadata with contact information`() {
+    fun `encode - decode v2 metadata with contact offer`() {
         val nodeKey = randomKey()
         val preimage = randomBytes32()
         val paymentHash = Crypto.sha256(preimage).byteVector32()
@@ -108,6 +108,29 @@ class OfferPaymentMetadataTestsCommon {
         assertEquals(metadata, OfferPaymentMetadata.decode(metadata.encode()))
         val pathId = metadata.toPathId(nodeKey)
         assertTrue(pathId.size() in 400..450)
+        assertEquals(metadata, OfferPaymentMetadata.fromPathId(nodeKey, pathId, paymentHash))
+    }
+
+    @Test
+    fun `encode - decode v2 metadata with contact address`() {
+        val nodeKey = randomKey()
+        val preimage = randomBytes32()
+        val paymentHash = Crypto.sha256(preimage).byteVector32()
+        val metadata = OfferPaymentMetadata.V2(
+            offerId = randomBytes32(),
+            amount = 200_000_000.msat,
+            preimage = preimage,
+            payerKey = randomKey().publicKey(),
+            payerNote = "hello there",
+            quantity = 1,
+            contactSecret = randomBytes32(),
+            payerOffer = null,
+            payerAddress = UnverifiedContactAddress(ContactAddress.fromString("alice@acinq.co")!!, randomKey().publicKey()),
+            createdAtMillis = 0
+        )
+        assertEquals(metadata, OfferPaymentMetadata.decode(metadata.encode()))
+        val pathId = metadata.toPathId(nodeKey)
+        assertEquals(236, pathId.size())
         assertEquals(metadata, OfferPaymentMetadata.fromPathId(nodeKey, pathId, paymentHash))
     }
 

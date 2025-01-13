@@ -16,11 +16,14 @@ fi
 
 read -p "Password : " -s OSS_PASSWORD
 
-for i in 	lightning-kmp \
-		lightning-kmp-iosarm64 \
-		lightning-kmp-iosx64 \
-		lightning-kmp-jvm \
-		lightning-kmp-linux
+for i in lightning-kmp-core \
+		lightning-kmp-core-iosarm64 \
+		lightning-kmp-core-iossimulatorarm64 \
+		lightning-kmp-core-iosx64 \
+		lightning-kmp-core-jvm \
+		lightning-kmp-core-linuxx64 \
+		lightning-kmp-core-macosarm64 \
+		lightning-kmp-core-macosx64
 do
 	pushd .
 	cd release/fr/acinq/lightning/$i/$VERSION &&\

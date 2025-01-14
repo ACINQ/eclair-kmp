@@ -91,8 +91,16 @@ sealed class WalletPayment {
     /** Absolute time in milliseconds since UNIX epoch when the payment was created. */
     abstract val createdAt: Long
 
-    /** Absolute time in milliseconds since UNIX epoch when the payment was completed. May be null. */
+    /**
+     * Absolute time in milliseconds since UNIX epoch when the payment was completed.
+     * A completed payment is not necessarily successful. For example a Lightning
+     * outgoing payment will be considered completed after all payment attempts
+     * have been exhausted.
+     */
     abstract val completedAt: Long?
+
+    /** Absolute time in milliseconds since UNIX epoch when the payment succeeded. */
+    abstract val succeededAt: Long?
 
     /** Fees applied to complete this payment. */
     abstract val fees: MilliSatoshi
@@ -109,6 +117,8 @@ sealed class IncomingPayment : WalletPayment() {
     /** Amount received for this part after applying the fees. This is the final amount we can use. */
     abstract val amountReceived: MilliSatoshi
     override val amount: MilliSatoshi get() = amountReceived
+    /** A completed incoming payment is always successful. */
+    override val succeededAt: Long? get() = completedAt
 }
 
 /**
@@ -321,6 +331,8 @@ data class LightningOutgoingPayment(
 
     override val completedAt: Long? = (status as? Status.Completed)?.completedAt
 
+    override val succeededAt: Long? = (status as? Status.Succeeded)?.completedAt
+
     /** This is the total fees that have been paid to make the payment work. It includes the LN routing fees, the fee for the swap-out service, the mining fees for closing a channel. */
     override val fees: MilliSatoshi = when (status) {
         is Status.Pending -> 0.msat
@@ -460,6 +472,7 @@ sealed class OnChainOutgoingPayment : OutgoingPayment() {
     abstract val confirmedAt: Long?
     abstract val lockedAt: Long?
     override val completedAt: Long? get() = lockedAt
+    override val succeededAt: Long? get() = lockedAt
 
     /** Helper method to facilitate updating child classes */
     fun setLocked(lockedAt: Long): OnChainOutgoingPayment =
@@ -551,10 +564,6 @@ data class InboundLiquidityOutgoingPayment(
     }
 }
 
-enum class ChannelClosingType {
-    Mutual, Local, Remote, Revoked, Other;
-}
-
 data class ChannelCloseOutgoingPayment(
     override val id: UUID,
     val recipientAmount: Satoshi,
@@ -572,6 +581,9 @@ data class ChannelCloseOutgoingPayment(
     override val lockedAt: Long?,
     val closingType: ChannelClosingType
 ) : OnChainOutgoingPayment() {
+    enum class ChannelClosingType {
+        Mutual, Local, Remote, Revoked, Other;
+    }
     override val amount: MilliSatoshi = (recipientAmount + miningFees).toMilliSatoshi()
     override val fees: MilliSatoshi = miningFees.toMilliSatoshi()
 }

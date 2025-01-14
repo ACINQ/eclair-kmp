@@ -303,12 +303,12 @@ object Deserialization {
         confirmedAt = readNullable { readNumber() },
         lockedAt = readNullable { readNumber() },
         closingType = when (val discriminator = read()) {
-            0x00 -> ChannelClosingType.Mutual
-            0x01 -> ChannelClosingType.Local
-            0x02 -> ChannelClosingType.Remote
-            0x03 -> ChannelClosingType.Revoked
-            0x04 -> ChannelClosingType.Other
-            else -> error("unknown discriminator $discriminator for class ${ChannelClosingType::class}")
+            0x00 -> ChannelCloseOutgoingPayment.ChannelClosingType.Mutual
+            0x01 -> ChannelCloseOutgoingPayment.ChannelClosingType.Local
+            0x02 -> ChannelCloseOutgoingPayment.ChannelClosingType.Remote
+            0x03 -> ChannelCloseOutgoingPayment.ChannelClosingType.Revoked
+            0x04 -> ChannelCloseOutgoingPayment.ChannelClosingType.Other
+            else -> error("unknown discriminator $discriminator for class ${ChannelCloseOutgoingPayment.ChannelClosingType::class}")
         }
     )
 }

@@ -6,7 +6,7 @@ import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.NodeEvents
 import fr.acinq.lightning.blockchain.Watch
 import fr.acinq.lightning.channel.states.PersistedChannelState
-import fr.acinq.lightning.db.ChannelClosingType
+import fr.acinq.lightning.db.ChannelCloseOutgoingPayment.ChannelClosingType
 import fr.acinq.lightning.transactions.Transactions
 import fr.acinq.lightning.utils.UUID
 import fr.acinq.lightning.wire.*

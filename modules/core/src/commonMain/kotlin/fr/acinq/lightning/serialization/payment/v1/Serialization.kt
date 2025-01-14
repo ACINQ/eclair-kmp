@@ -354,11 +354,11 @@ object Serialization {
         writeNullable(confirmedAt) { writeNumber(it) }
         writeNullable(lockedAt) { writeNumber(it) }
         when (closingType) {
-            ChannelClosingType.Mutual -> write(0x00)
-            ChannelClosingType.Local -> write(0x01)
-            ChannelClosingType.Remote -> write(0x02)
-            ChannelClosingType.Revoked -> write(0x03)
-            ChannelClosingType.Other -> write(0x04)
+            ChannelCloseOutgoingPayment.ChannelClosingType.Mutual -> write(0x00)
+            ChannelCloseOutgoingPayment.ChannelClosingType.Local -> write(0x01)
+            ChannelCloseOutgoingPayment.ChannelClosingType.Remote -> write(0x02)
+            ChannelCloseOutgoingPayment.ChannelClosingType.Revoked -> write(0x03)
+            ChannelCloseOutgoingPayment.ChannelClosingType.Other -> write(0x04)
         }
     }
 }

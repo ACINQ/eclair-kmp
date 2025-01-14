@@ -173,18 +173,12 @@
         },
         "remotePerCommitmentSecrets": "<redacted>"
     },
-    "localShutdown": {
-        "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
-        "scriptPubKey": "76a9143a52c0fc59997d1e53009d607e3d93ca56b1014c88ac"
-    },
-    "remoteShutdown": {
-        "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
-        "scriptPubKey": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c"
-    },
-    "closingTxProposed": [
-        [
-        ]
+    "lastClosingFeerate": null,
+    "localScript": "76a9143a52c0fc59997d1e53009d607e3d93ca56b1014c88ac",
+    "remoteScript": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c",
+    "proposedClosingTxs": [
     ],
-    "bestUnpublishedClosingTx": null,
-    "closingFeerates": null
+    "publishedClosingTxs": [
+    ],
+    "waitingSinceBlock": 0
 }

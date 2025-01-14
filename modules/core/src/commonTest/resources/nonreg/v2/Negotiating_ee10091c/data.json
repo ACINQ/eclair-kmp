@@ -173,57 +173,12 @@
         },
         "remotePerCommitmentSecrets": "<redacted>"
     },
-    "localShutdown": {
-        "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
-        "scriptPubKey": "001434947cfb2e8f6054ddf12daed4308cbe342580d1"
-    },
-    "remoteShutdown": {
-        "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
-        "scriptPubKey": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c"
-    },
-    "closingTxProposed": [
-        [
-            {
-                "unsignedTx": {
-                    "input": {
-                        "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
-                        "txOut": {
-                            "amount": 1000000,
-                            "publicKeyScript": "00204ba42b50e089764e60e9e0c76c57e41d252d6beb976332f14a7b255bbb5322b8"
-                        },
-                        "redeemScript": "522102b6eaf304d966a6df90f3b3df7af7be6b1625854bbc096cb8b3507b2a37c2bf9c210385cfd7d8850e4cb8fcbed57310911218e5d5e1fd34f92ef5d9db14d56418caa452ae"
-                    },
-                    "tx": "02000000012f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd0000000000ffffffff02400d03000000000016001434947cfb2e8f6054ddf12daed4308cbe342580d11a2d0c000000000016001405e0104aa726e34ff5cd3a6320d05c0862b5b01c00000000",
-                    "toLocalIndex": 0
-                },
-                "localClosingSigned": {
-                    "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
-                    "feeSatoshis": 2022,
-                    "signature": "517e72591fed6c80b3bd8314cf4e44a3ca19a19882ab92d6238ab01e5fa76ab52435b680685bec0f3f04d2bd75bb4e137d1175c87987d99662450efc66b907c3",
-                    "tlvStream": {
-                        "records": [
-                            {
-                                "type": "fr.acinq.lightning.wire.ClosingSignedTlv.FeeRange",
-                                "min": 1348,
-                                "max": 2022
-                            }
-                        ]
-                    }
-                }
-            }
-        ]
+    "lastClosingFeerate": null,
+    "localScript": "001434947cfb2e8f6054ddf12daed4308cbe342580d1",
+    "remoteScript": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c",
+    "proposedClosingTxs": [
     ],
-    "bestUnpublishedClosingTx": {
-        "input": {
-            "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
-            "txOut": {
-                "amount": 1000000,
-                "publicKeyScript": "00204ba42b50e089764e60e9e0c76c57e41d252d6beb976332f14a7b255bbb5322b8"
-            },
-            "redeemScript": "522102b6eaf304d966a6df90f3b3df7af7be6b1625854bbc096cb8b3507b2a37c2bf9c210385cfd7d8850e4cb8fcbed57310911218e5d5e1fd34f92ef5d9db14d56418caa452ae"
-        },
-        "tx": "020000000001012f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd0000000000ffffffff02400d03000000000016001434947cfb2e8f6054ddf12daed4308cbe342580d16b2e0c000000000016001405e0104aa726e34ff5cd3a6320d05c0862b5b01c0400483045022100b2cc62e81ae67b7f67421055afda676fdf049cd8b5810afe7d13c4c0f63f724002206acf483e46ec6517a208d00851e19e964aab2de5290a5c599366701f4102a50e0147304402206dd03bb394e2058717cd89586906385e457a4ed3634af2960b3928f113e1e7de02205ac9c9322430c11240769a51b43cbaf203c7c04f199c3d0d457b21f387c21cdb0147522102b6eaf304d966a6df90f3b3df7af7be6b1625854bbc096cb8b3507b2a37c2bf9c210385cfd7d8850e4cb8fcbed57310911218e5d5e1fd34f92ef5d9db14d56418caa452ae00000000",
-        "toLocalIndex": 0
-    },
-    "closingFeerates": null
+    "publishedClosingTxs": [
+    ],
+    "waitingSinceBlock": 0
 }

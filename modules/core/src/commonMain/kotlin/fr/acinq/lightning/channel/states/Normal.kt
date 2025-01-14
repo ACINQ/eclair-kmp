@@ -9,6 +9,7 @@ import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_DEPTHOK
 import fr.acinq.lightning.blockchain.WatchConfirmed
 import fr.acinq.lightning.blockchain.WatchEventConfirmed
 import fr.acinq.lightning.blockchain.WatchEventSpent
+import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.transactions.Scripts
 import fr.acinq.lightning.transactions.Transactions
@@ -22,7 +23,7 @@ data class Normal(
     val remoteChannelUpdate: ChannelUpdate?,
     val localShutdown: Shutdown?,
     val remoteShutdown: Shutdown?,
-    val closingFeerates: ClosingFeerates?,
+    val closingFeerate: FeeratePerKw?,
     val spliceStatus: SpliceStatus,
 ) : ChannelStateWithCommitments() {
 
@@ -89,15 +90,16 @@ data class Normal(
             }
             is ChannelCommand.Close.MutualClose -> {
                 val allowAnySegwit = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.ShutdownAnySegwit)
+                val allowOpReturn = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.SimpleClose)
                 val localScriptPubkey = cmd.scriptPubKey ?: commitments.params.localParams.defaultFinalScriptPubKey
                 when {
                     localShutdown != null -> handleCommandError(cmd, ClosingAlreadyInProgress(channelId), channelUpdate)
                     commitments.changes.localHasUnsignedOutgoingHtlcs() -> handleCommandError(cmd, CannotCloseWithUnsignedOutgoingHtlcs(channelId), channelUpdate)
                     commitments.changes.localHasUnsignedOutgoingUpdateFee() -> handleCommandError(cmd, CannotCloseWithUnsignedOutgoingUpdateFee(channelId), channelUpdate)
-                    !Helpers.Closing.isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit) -> handleCommandError(cmd, InvalidFinalScript(channelId), channelUpdate)
+                    !Helpers.Closing.isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit, allowOpReturn) -> handleCommandError(cmd, InvalidFinalScript(channelId), channelUpdate)
                     else -> {
                         val shutdown = Shutdown(channelId, localScriptPubkey)
-                        val newState = this@Normal.copy(localShutdown = shutdown, closingFeerates = cmd.feerates)
+                        val newState = this@Normal.copy(localShutdown = shutdown, closingFeerate = cmd.feerate)
                         val actions = listOf(ChannelAction.Storage.StoreState(newState), ChannelAction.Message.Send(shutdown))
                         Pair(newState, actions)
                     }
@@ -236,22 +238,10 @@ data class Normal(
                                 actions.add(ChannelAction.Message.Send(localShutdown))
                                 if (commitments1.latest.remoteCommit.spec.htlcs.isNotEmpty()) {
                                     // we just signed htlcs that need to be resolved now
-                                    ShuttingDown(commitments1, localShutdown, remoteShutdown, closingFeerates)
+                                    ShuttingDown(commitments1, localShutdown, remoteShutdown, closingFeerate)
                                 } else {
-                                    logger.warning { "we have no htlcs but have not replied with our Shutdown yet, this should never happen" }
-                                    val closingTxProposed = if (paysClosingFees) {
-                                        val (closingTx, closingSigned) = Helpers.Closing.makeFirstClosingTx(
-                                            channelKeys(),
-                                            commitments1.latest,
-                                            localShutdown.scriptPubKey.toByteArray(),
-                                            remoteShutdown.scriptPubKey.toByteArray(),
-                                            closingFeerates ?: ClosingFeerates(currentOnChainFeerates().mutualCloseFeerate),
-                                        )
-                                        listOf(listOf(ClosingTxProposed(closingTx, closingSigned)))
-                                    } else {
-                                        listOf(listOf())
-                                    }
-                                    Negotiating(commitments1, localShutdown, remoteShutdown, closingTxProposed, bestUnpublishedClosingTx = null, closingFeerates)
+                                    logger.warning { "we have no htlcs but have not replied with our shutdown yet, this should never happen" }
+                                    Negotiating(commitments1, closingFeerate, localShutdown.scriptPubKey, remoteShutdown.scriptPubKey, listOf(), listOf(), currentBlockHeight.toLong())
                                 }
                             } else {
                                 this@Normal.copy(commitments = commitments1)
@@ -270,6 +260,7 @@ data class Normal(
                     }
                     is Shutdown -> {
                         val allowAnySegwit = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.ShutdownAnySegwit)
+                        val allowOpReturn = Features.canUseFeature(commitments.params.localParams.features, commitments.params.remoteParams.features, Feature.SimpleClose)
                         // they have pending unsigned htlcs         => they violated the spec, close the channel
                         // they don't have pending unsigned htlcs
                         //    we have pending unsigned htlcs
@@ -285,7 +276,7 @@ data class Normal(
                         //        there are pending signed changes  => go to SHUTDOWN
                         //        there are no changes              => go to NEGOTIATING
                         when {
-                            !Helpers.Closing.isValidFinalScriptPubkey(cmd.message.scriptPubKey, allowAnySegwit) -> handleLocalError(cmd, InvalidFinalScript(channelId))
+                            !Helpers.Closing.isValidFinalScriptPubkey(cmd.message.scriptPubKey, allowAnySegwit, allowOpReturn) -> handleLocalError(cmd, InvalidFinalScript(channelId))
                             commitments.changes.remoteHasUnsignedOutgoingHtlcs() -> handleLocalError(cmd, CannotCloseWithUnsignedOutgoingHtlcs(channelId))
                             commitments.changes.remoteHasUnsignedOutgoingUpdateFee() -> handleLocalError(cmd, CannotCloseWithUnsignedOutgoingUpdateFee(channelId))
                             commitments.changes.localHasUnsignedOutgoingHtlcs() -> {
@@ -310,33 +301,10 @@ data class Normal(
                                 if (this@Normal.localShutdown == null) actions.add(ChannelAction.Message.Send(localShutdown))
                                 val commitments1 = commitments.copy(remoteChannelData = cmd.message.channelData)
                                 when {
-                                    commitments1.hasNoPendingHtlcsOrFeeUpdate() && paysClosingFees -> {
-                                        val (closingTx, closingSigned) = Helpers.Closing.makeFirstClosingTx(
-                                            channelKeys(),
-                                            commitments1.latest,
-                                            localShutdown.scriptPubKey.toByteArray(),
-                                            cmd.message.scriptPubKey.toByteArray(),
-                                            closingFeerates ?: ClosingFeerates(currentOnChainFeerates().mutualCloseFeerate),
-                                        )
-                                        val nextState = Negotiating(
-                                            commitments1,
-                                            localShutdown,
-                                            cmd.message,
-                                            listOf(listOf(ClosingTxProposed(closingTx, closingSigned))),
-                                            bestUnpublishedClosingTx = null,
-                                            closingFeerates
-                                        )
-                                        actions.addAll(listOf(ChannelAction.Storage.StoreState(nextState), ChannelAction.Message.Send(closingSigned)))
-                                        Pair(nextState, actions)
-                                    }
-                                    commitments1.hasNoPendingHtlcsOrFeeUpdate() -> {
-                                        val nextState = Negotiating(commitments1, localShutdown, cmd.message, listOf(listOf()), null, closingFeerates)
-                                        actions.add(ChannelAction.Storage.StoreState(nextState))
-                                        Pair(nextState, actions)
-                                    }
+                                    commitments1.hasNoPendingHtlcsOrFeeUpdate() -> startClosingNegotiation(commitments1, localShutdown, cmd.message, actions)
                                     else -> {
                                         // there are some pending changes, we need to wait for them to be settled (fail/fulfill htlcs and sign fee updates)
-                                        val nextState = ShuttingDown(commitments1, localShutdown, cmd.message, closingFeerates)
+                                        val nextState = ShuttingDown(commitments1, localShutdown, cmd.message, closingFeerate)
                                         actions.add(ChannelAction.Storage.StoreState(nextState))
                                         Pair(nextState, actions)
                                     }
@@ -407,7 +375,7 @@ data class Normal(
                                             spliceStatus.command.replyTo.complete(ChannelFundingResponse.Failure.InsufficientFunds(balanceAfterFees, liquidityFees, spliceStatus.command.currentFeeCredit))
                                             val action = listOf(ChannelAction.Message.Send(TxAbort(channelId, InvalidSpliceRequest(channelId).message)))
                                             Pair(this@Normal.copy(spliceStatus = SpliceStatus.Aborted), action)
-                                        } else if (spliceStatus.command.spliceOut?.scriptPubKey?.let { Helpers.Closing.isValidFinalScriptPubkey(it, allowAnySegwit = true) } == false) {
+                                        } else if (spliceStatus.command.spliceOut?.scriptPubKey?.let { Helpers.Closing.isValidFinalScriptPubkey(it, allowAnySegwit = true, allowOpReturn = true) } == false) {
                                             logger.warning { "cannot do splice: invalid splice-out script" }
                                             spliceStatus.command.replyTo.complete(ChannelFundingResponse.Failure.InvalidSpliceOutPubKeyScript)
                                             val action = listOf(ChannelAction.Message.Send(TxAbort(channelId, InvalidSpliceRequest(channelId).message)))
@@ -928,6 +896,39 @@ data class Normal(
         spliceStatus is SpliceStatus.WaitingForSigs -> spliceStatus.session.fundingTx.txId
         commitments.latest.localFundingStatus is LocalFundingStatus.UnconfirmedFundingTx && commitments.latest.localFundingStatus.sharedTx is PartiallySignedSharedTransaction -> commitments.latest.localFundingStatus.txId
         else -> null
+    }
+
+    private fun ChannelContext.startClosingNegotiation(commitments: Commitments, localShutdown: Shutdown, remoteShutdown: Shutdown, actions: List<ChannelAction>): Pair<ChannelState, List<ChannelAction>> {
+        val localScript = localShutdown.scriptPubKey
+        val remoteScript = remoteShutdown.scriptPubKey
+        val currentHeight = currentBlockHeight.toLong()
+        return when (closingFeerate) {
+            null -> {
+                logger.info { "mutual close was initiated by our peer, waiting for remote closing_complete" }
+                val nextState = Negotiating(commitments, closingFeerate, localScript, remoteScript, listOf(), listOf(), currentHeight)
+                val actions1 = listOf(ChannelAction.Storage.StoreState(nextState))
+                Pair(nextState, actions + actions1)
+            }
+            else -> {
+                when (val closingResult = Helpers.Closing.makeClosingTxs(channelKeys(), commitments.latest, localScript, remoteScript, closingFeerate, currentHeight)) {
+                    is Either.Left -> {
+                        logger.warning { "cannot create local closing txs, waiting for remote closing_complete: ${closingResult.value.message}" }
+                        val nextState = Negotiating(commitments, closingFeerate, localScript, remoteScript, listOf(), listOf(), currentHeight)
+                        val actions1 = listOf(ChannelAction.Storage.StoreState(nextState))
+                        Pair(nextState, actions + actions1)
+                    }
+                    is Either.Right -> {
+                        val (closingTxs, closingComplete) = closingResult.value
+                        val nextState = Negotiating(commitments, closingFeerate, localScript, remoteScript, listOf(closingTxs), listOf(), currentHeight)
+                        val actions1 = listOf(
+                            ChannelAction.Storage.StoreState(nextState),
+                            ChannelAction.Message.Send(closingComplete),
+                        )
+                        Pair(nextState, actions + actions1)
+                    }
+                }
+            }
+        }
     }
 
     private fun ChannelContext.handleCommandResult(command: ChannelCommand, result: Either<ChannelException, Pair<Commitments, LightningMessage>>, commit: Boolean): Pair<ChannelState, List<ChannelAction>> {

@@ -259,38 +259,60 @@ object TestsHelper {
         return Triple(alice1, bob1, fundingTx)
     }
 
-    fun mutualCloseAlice(alice: LNChannel<Normal>, bob: LNChannel<Normal>, scriptPubKey: ByteVector? = null, feerates: ClosingFeerates? = null): Triple<LNChannel<Negotiating>, LNChannel<Negotiating>, ClosingSigned> {
-        val (alice1, actionsAlice1) = alice.process(ChannelCommand.Close.MutualClose(scriptPubKey, feerates))
+    fun mutualCloseAlice(alice: LNChannel<Normal>, bob: LNChannel<Normal>, closingFeerate: FeeratePerKw, scriptPubKey: ByteVector? = null): Triple<LNChannel<Negotiating>, LNChannel<Negotiating>, Transaction> {
+        val (alice1, actionsAlice1) = alice.process(ChannelCommand.Close.MutualClose(scriptPubKey, closingFeerate))
         assertIs<LNChannel<Normal>>(alice1)
         val shutdownAlice = actionsAlice1.findOutgoingMessage<Shutdown>()
-        assertNull(actionsAlice1.findOutgoingMessageOpt<ClosingSigned>())
+        assertNull(actionsAlice1.findOutgoingMessageOpt<ClosingComplete>())
 
         val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(shutdownAlice))
         assertIs<LNChannel<Negotiating>>(bob1)
         val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
-        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingSigned>())
+        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingComplete>())
 
         val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(shutdownBob))
         assertIs<LNChannel<Negotiating>>(alice2)
-        val closingSignedAlice = actionsAlice2.findOutgoingMessage<ClosingSigned>()
-        return Triple(alice2, bob1, closingSignedAlice)
+        val closingComplete = actionsAlice2.findOutgoingMessage<ClosingComplete>()
+
+        val (bob2, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(closingComplete))
+        assertIs<LNChannel<Negotiating>>(bob2)
+        val closingSig = actionsBob2.findOutgoingMessage<ClosingSig>()
+
+        val (alice3, actionsAlice3) = alice2.process(ChannelCommand.MessageReceived(closingSig))
+        assertIs<LNChannel<Negotiating>>(alice3)
+        val closingTx = actionsAlice3.findPublishTxs().first()
+        actionsAlice3.hasWatchConfirmed(closingTx.txid)
+        val commitInput = alice1.commitments.latest.commitInput
+        Transaction.correctlySpends(closingTx, mapOf(commitInput.outPoint to commitInput.txOut), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+        return Triple(alice3, bob2, closingTx)
     }
 
-    fun mutualCloseBob(alice: LNChannel<Normal>, bob: LNChannel<Normal>, scriptPubKey: ByteVector? = null, feerates: ClosingFeerates? = null): Triple<LNChannel<Negotiating>, LNChannel<Negotiating>, ClosingSigned> {
-        val (bob1, actionsBob1) = bob.process(ChannelCommand.Close.MutualClose(scriptPubKey, feerates))
+    fun mutualCloseBob(alice: LNChannel<Normal>, bob: LNChannel<Normal>, closingFeerate: FeeratePerKw, scriptPubKey: ByteVector? = null): Triple<LNChannel<Negotiating>, LNChannel<Negotiating>, Transaction> {
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.Close.MutualClose(scriptPubKey, closingFeerate))
         assertIs<LNChannel<Normal>>(bob1)
         val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
-        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingSigned>())
+        assertNull(actionsBob1.findOutgoingMessageOpt<ClosingComplete>())
 
         val (alice1, actionsAlice1) = alice.process(ChannelCommand.MessageReceived(shutdownBob))
         assertIs<LNChannel<Negotiating>>(alice1)
         val shutdownAlice = actionsAlice1.findOutgoingMessage<Shutdown>()
-        val closingSignedAlice = actionsAlice1.findOutgoingMessage<ClosingSigned>()
+        assertNull(actionsAlice1.findOutgoingMessageOpt<ClosingComplete>())
 
         val (bob2, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(shutdownAlice))
         assertIs<LNChannel<Negotiating>>(bob2)
-        assertNull(actionsBob2.findOutgoingMessageOpt<ClosingSigned>())
-        return Triple(alice1, bob2, closingSignedAlice)
+        val closingComplete = actionsBob2.findOutgoingMessage<ClosingComplete>()
+
+        val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(closingComplete))
+        assertIs<LNChannel<Negotiating>>(alice2)
+        val closingSig = actionsAlice2.findOutgoingMessage<ClosingSig>()
+
+        val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(closingSig))
+        assertIs<LNChannel<Negotiating>>(bob3)
+        val closingTx = actionsBob3.findPublishTxs().first()
+        actionsBob3.hasWatchConfirmed(closingTx.txid)
+        val commitInput = alice1.commitments.latest.commitInput
+        Transaction.correctlySpends(closingTx, mapOf(commitInput.outPoint to commitInput.txOut), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+        return Triple(alice2, bob3, closingTx)
     }
 
     fun localClose(s: LNChannel<ChannelState>): Pair<LNChannel<Closing>, LocalCommitPublished> {

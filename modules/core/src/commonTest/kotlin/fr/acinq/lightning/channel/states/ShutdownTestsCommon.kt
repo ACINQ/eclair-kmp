@@ -360,30 +360,11 @@ class ShutdownTestsCommon : LightningTestSuite() {
         val (_, bob0) = reachNormal()
         assertTrue(bob0.commitments.params.localParams.features.hasFeature(Feature.ChannelBackupClient))
         assertFalse(bob0.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) // this isn't a permanent channel feature
-        val (bob1, actions1) = bob0.process(ChannelCommand.Close.MutualClose(null, null))
+        val (bob1, actions1) = bob0.process(ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw))
         assertIs<LNChannel<Normal>>(bob1)
         val blob = EncryptedChannelData.from(bob1.staticParams.nodeParams.nodePrivateKey, bob1.state)
         val shutdown = actions1.findOutgoingMessage<Shutdown>()
         assertEquals(blob, shutdown.channelData)
-    }
-
-    @Test
-    fun `recv Shutdown with non-initiator paying commit fees`() {
-        val (alice, bob) = reachNormal(requestRemoteFunding = TestConstants.bobFundingAmount)
-        assertFalse(alice.commitments.params.localParams.paysCommitTxFees)
-        assertTrue(bob.commitments.params.localParams.paysCommitTxFees)
-        // Alice can initiate a mutual close, even though she's not paying the commitment fees.
-        // Bob will send closing_signed first since he's paying the commitment fees.
-        val (alice1, actionsAlice1) = alice.process(ChannelCommand.Close.MutualClose(null, null))
-        assertIs<LNChannel<ShuttingDown>>(alice1)
-        val shutdownAlice = actionsAlice1.findOutgoingMessage<Shutdown>()
-        val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(shutdownAlice))
-        assertIs<LNChannel<ShuttingDown>>(bob1)
-        val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
-        actionsBob1.findOutgoingMessage<ClosingSigned>()
-        val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(shutdownBob))
-        assertIs<LNChannel<ShuttingDown>>(alice2)
-        assertNull(actionsAlice2.findOutgoingMessageOpt<ClosingSigned>())
     }
 
     @Test
@@ -490,10 +471,36 @@ class ShutdownTestsCommon : LightningTestSuite() {
 
     @Test
     fun `recv ChannelCommand_Close_MutualClose`() {
-        val (alice, _) = init()
-        val (alice1, actions) = alice.process(ChannelCommand.Close.MutualClose(null, null))
-        assertEquals(alice1, alice)
-        assertEquals(actions, listOf(ChannelAction.ProcessCmdRes.NotExecuted(ChannelCommand.Close.MutualClose(null, null), ClosingAlreadyInProgress(alice.channelId))))
+        val (alice, bob) = init()
+
+        // Alice updates our closing feerate.
+        val (alice1, actionsAlice1) = alice.process(ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw * 1.5))
+        assertIs<ShuttingDown>(alice1.state)
+        assertEquals(TestConstants.feeratePerKw * 1.5, alice1.state.closingFeerate)
+        assertEquals(1, actionsAlice1.size)
+        actionsAlice1.has<ChannelAction.Storage.StoreState>()
+
+        // Alice updates her closing script.
+        val aliceScript = Script.write(Script.pay2wpkh(randomKey().publicKey())).byteVector()
+        val (alice2, actionsAlice2) = alice1.process(ChannelCommand.Close.MutualClose(aliceScript, TestConstants.feeratePerKw * 2))
+        assertIs<ShuttingDown>(alice2.state)
+        assertEquals(TestConstants.feeratePerKw * 2, alice2.state.closingFeerate)
+        assertEquals(2, actionsAlice2.size)
+        actionsAlice2.has<ChannelAction.Storage.StoreState>()
+        val shutdownAlice = actionsAlice2.findOutgoingMessage<Shutdown>()
+        assertEquals(shutdownAlice, alice2.state.localShutdown)
+        assertEquals(aliceScript, shutdownAlice.scriptPubKey)
+
+        // Bob updates his closing feerate and script.
+        val bobScript = Script.write(Script.pay2wpkh(randomKey().publicKey())).byteVector()
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.Close.MutualClose(bobScript, TestConstants.feeratePerKw * 1.5))
+        assertIs<ShuttingDown>(bob1.state)
+        assertEquals(TestConstants.feeratePerKw * 1.5, bob1.state.closingFeerate)
+        assertEquals(2, actionsBob1.size)
+        actionsBob1.has<ChannelAction.Storage.StoreState>()
+        val shutdownBob = actionsBob1.findOutgoingMessage<Shutdown>()
+        assertEquals(shutdownBob.scriptPubKey, bob1.state.localShutdown.scriptPubKey)
+        assertEquals(bobScript, shutdownBob.scriptPubKey)
     }
 
     private fun testLocalForceClose(alice: LNChannel<ChannelState>, actions: List<ChannelAction>) {
@@ -591,17 +598,17 @@ class ShutdownTestsCommon : LightningTestSuite() {
 
         fun shutdown(alice: LNChannel<ChannelState>, bob: LNChannel<ChannelState>): Pair<LNChannel<ShuttingDown>, LNChannel<ShuttingDown>> {
             // Alice initiates a closing
-            val (alice1, actionsAlice) = alice.process(ChannelCommand.Close.MutualClose(null, null))
-            val shutdown = actionsAlice.findOutgoingMessage<Shutdown>()
-            val (bob1, actionsBob) = bob.process(ChannelCommand.MessageReceived(shutdown))
-            val shutdown1 = actionsBob.findOutgoingMessage<Shutdown>()
-            val (alice2, _) = alice1.process(ChannelCommand.MessageReceived(shutdown1))
+            val (alice1, actionsAlice) = alice.process(ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw))
+            val shutdownAlice = actionsAlice.findOutgoingMessage<Shutdown>()
+            val (bob1, actionsBob) = bob.process(ChannelCommand.MessageReceived(shutdownAlice))
+            val shutdownBob = actionsBob.findOutgoingMessage<Shutdown>()
+            val (alice2, _) = alice1.process(ChannelCommand.MessageReceived(shutdownBob))
             assertIs<LNChannel<ShuttingDown>>(alice2)
             assertIs<LNChannel<ShuttingDown>>(bob1)
             assertIs<ShuttingDown>(alice2.state)
             assertIs<ShuttingDown>(bob1.state)
-            if (alice2.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown.channelData.isEmpty())
-            if (bob1.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdown1.channelData.isEmpty())
+            if (alice2.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdownAlice.channelData.isEmpty())
+            if (bob1.state.commitments.params.channelFeatures.hasFeature(Feature.ChannelBackupClient)) assertFalse(shutdownBob.channelData.isEmpty())
             return Pair(alice2, bob1)
         }
     }

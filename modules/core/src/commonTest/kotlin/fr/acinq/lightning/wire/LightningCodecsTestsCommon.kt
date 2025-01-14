@@ -380,7 +380,8 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
         val fundingLease = LiquidityAds.FundingRate(500_000.sat, 5_000_000.sat, 1100, 75, 0.sat, 1_500.sat)
         val requestFunds = LiquidityAds.RequestFunding(750_000.sat, fundingLease, LiquidityAds.PaymentDetails.FromChannelBalance)
         val fundingScript = Helpers.Funding.makeFundingPubKeyScript(publicKey(1), publicKey(1))
-        val willFund = LiquidityAds.WillFundRates(listOf(fundingLease), setOf(LiquidityAds.PaymentType.FromChannelBalance)).validateRequest(nodeKey, fundingScript, FeeratePerKw(5000.sat), requestFunds, isChannelCreation = true, 0.msat)!!.willFund
+        val willFund =
+            LiquidityAds.WillFundRates(listOf(fundingLease), setOf(LiquidityAds.PaymentType.FromChannelBalance)).validateRequest(nodeKey, fundingScript, FeeratePerKw(5000.sat), requestFunds, isChannelCreation = true, 0.msat)!!.willFund
         // @formatter:off
         val defaultAccept = AcceptDualFundedChannel(ByteVector32.One, 50_000.sat, 473.sat, 100_000_000, 1.msat, 6, CltvExpiryDelta(144), 50, publicKey(1), point(2), point(3), point(4), point(5), point(6), publicKey(7))
         val defaultEncoded = ByteVector("0041 0100000000000000000000000000000000000000000000000000000000000000 000000000000c350 00000000000001d9 0000000005f5e100 0000000000000001 00000006 0090 0032 031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f 024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766 02531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337 03462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b 0362c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7 03f006a18d5653c4edf5391ff23a61f03ff83d237e880ee61187fa9f379a028e0a 02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f")
@@ -683,50 +684,32 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `encode - decode closing_signed`() {
-        val defaultSig = ByteVector64("01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101")
-        val testCases = listOf(
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 0000000000000000 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") to ClosingSigned(
-                ByteVector32.One,
-                0.sat,
-                ByteVector64.Zeroes
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000003e8 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") to ClosingSigned(
-                ByteVector32.One,
-                1000.sat,
-                ByteVector64.Zeroes
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000005dc 01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingSigned(
-                ByteVector32.One,
-                1500.sat,
-                defaultSig
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000005dc 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 0110000000000000006400000000000007d0") to ClosingSigned(
-                ByteVector32.One,
-                1500.sat,
-                ByteVector64.Zeroes,
-                TlvStream(ClosingSignedTlv.FeeRange(100.sat, 2000.sat))
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000003e8 01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 0110000000000000006400000000000007d0") to ClosingSigned(
-                ByteVector32.One,
-                1000.sat,
-                defaultSig,
-                TlvStream(ClosingSignedTlv.FeeRange(100.sat, 2000.sat))
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 0000000000000064 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 0110000000000000006400000000000003e8 030401020304") to ClosingSigned(
-                ByteVector32.One,
-                100.sat,
-                ByteVector64.Zeroes,
-                TlvStream(setOf(ClosingSignedTlv.FeeRange(100.sat, 1000.sat)), setOf(GenericTlv(3, ByteVector("01020304"))))
-            ),
+    fun `encode - decode closing messages`() {
+        val channelId = ByteVector32("58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86")
+        val sig1 = ByteVector64("01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101")
+        val sig2 = ByteVector64("02020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202")
+        val sig3 = ByteVector64("03030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303")
+        val closerScript = Hex.decode("deadbeef").byteVector()
+        val closeeScript = Hex.decode("d43db3ef1234").byteVector()
+        val testCases = mapOf(
+            // @formatter:off
+            Hex.decode("0028 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000") to ClosingComplete(channelId, closerScript, closeeScript, 1105.sat, 0),
+            Hex.decode("0028 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 000c96a8 024001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingComplete(channelId, closerScript, closeeScript, 1105.sat, 825_000, TlvStream(ClosingCompleteTlv.CloseeOutputOnly(sig1))),
+            Hex.decode("0028 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 034001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingComplete(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingCompleteTlv.CloserAndCloseeOutputs(sig1))),
+            Hex.decode("0028 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 014001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 034002020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202") to ClosingComplete(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingCompleteTlv.CloserOutputOnly(sig1), ClosingCompleteTlv.CloserAndCloseeOutputs(sig2))),
+            Hex.decode("0028 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 014001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 024002020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202 034003030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303") to ClosingComplete(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingCompleteTlv.CloserOutputOnly(sig1), ClosingCompleteTlv.CloseeOutputOnly(sig2), ClosingCompleteTlv.CloserAndCloseeOutputs(sig3))),
+            Hex.decode("0029 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000") to ClosingSig(channelId, closerScript, closeeScript, 1105.sat, 0),
+            Hex.decode("0029 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 024001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingSig(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingSigTlv.CloseeOutputOnly(sig1))),
+            Hex.decode("0029 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 034001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingSig(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingSigTlv.CloserAndCloseeOutputs(sig1))),
+            Hex.decode("0029 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 014001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 034002020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202") to ClosingSig(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingSigTlv.CloserOutputOnly(sig1), ClosingSigTlv.CloserAndCloseeOutputs(sig2))),
+            Hex.decode("0029 58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86 0004deadbeef 0006d43db3ef1234 0000000000000451 00000000 014001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 024002020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202 034003030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303") to ClosingSig(channelId, closerScript, closeeScript, 1105.sat, 0, TlvStream(ClosingSigTlv.CloserOutputOnly(sig1), ClosingSigTlv.CloseeOutputOnly(sig2), ClosingSigTlv.CloserAndCloseeOutputs(sig3))),
+            // @formatter:on
         )
-
         testCases.forEach {
-            val decoded = LightningMessage.decode(it.first)
-            assertNotNull(decoded)
-            assertEquals(decoded, it.second)
-            val reEncoded = LightningMessage.encode(decoded)
-            assertContentEquals(reEncoded, it.first)
+            val decoded = LightningMessage.decode(it.key)
+            assertEquals(it.value, decoded)
+            val encoded = LightningMessage.encode(it.value)
+            assertContentEquals(it.key, encoded)
         }
     }
 
@@ -774,13 +757,12 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("01 02 0102") + Hex.decode("fe47010000 00") to Shutdown(channelId, randomData.toByteVector(), TlvStream(setOf(ShutdownTlv.ChannelData(EncryptedChannelData.empty)), setOf(GenericTlv(1, ByteVector("0102"))))),
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("fe47010000 07 cccccccccccccc") to Shutdown(channelId, randomData.toByteVector()).withChannelData(ByteVector("cccccccccccccc")),
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("01 02 0102") + Hex.decode("fe47010000 07 cccccccccccccc") to Shutdown(channelId, randomData.toByteVector(), TlvStream(setOf(ShutdownTlv.ChannelData(EncryptedChannelData(ByteVector("cccccccccccccc")))), setOf(GenericTlv(1, ByteVector("0102"))))),
-            // closing_signed
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() to ClosingSigned(channelId, 123456789.sat, signature),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(), setOf(GenericTlv(3, ByteVector("0102"))))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("fe47010000 00") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(ClosingSignedTlv.ChannelData(EncryptedChannelData.empty))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") + Hex.decode("fe47010000 00") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(ClosingSignedTlv.ChannelData(EncryptedChannelData.empty)), setOf(GenericTlv(3, ByteVector("0102"))))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingSigned(channelId, 123456789.sat, signature).withChannelData(ByteVector("cccccccccccccc")),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(ClosingSignedTlv.ChannelData(EncryptedChannelData(ByteVector("cccccccccccccc")))), setOf(GenericTlv(3, ByteVector("0102")))))
+            // closing_complete
+            Hex.decode("0028") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 00") to ClosingComplete(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0, TlvStream(ClosingCompleteTlv.ChannelData(EncryptedChannelData.empty))),
+            Hex.decode("0028") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingComplete(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0).withChannelData(ByteVector("cccccccccccccc")),
+            // closing_sig
+            Hex.decode("0029") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 00") to ClosingSig(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0, TlvStream(ClosingSigTlv.ChannelData(EncryptedChannelData.empty))),
+            Hex.decode("0029") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingSig(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0).withChannelData(ByteVector("cccccccccccccc")),
         )
         // @formatter:on
 
@@ -803,7 +785,8 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
             CommitSig(randomBytes32(), randomBytes64(), listOf()),
             RevokeAndAck(randomBytes32(), randomKey(), randomKey().publicKey()),
             Shutdown(randomBytes32(), ByteVector("deadbeef")),
-            ClosingSigned(randomBytes32(), 0.sat, randomBytes64()),
+            ClosingComplete(randomBytes32(), ByteVector.empty, ByteVector.empty, 250.sat, 0),
+            ClosingSig(randomBytes32(), ByteVector.empty, ByteVector.empty, 250.sat, 0),
         )
         messages.forEach {
             assertEquals(it.withChannelData(belowLimit).channelData, belowLimit)

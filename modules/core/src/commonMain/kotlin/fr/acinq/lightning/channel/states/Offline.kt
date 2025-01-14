@@ -56,8 +56,8 @@ data class Offline(val state: PersistedChannelState) : ChannelState() {
             is ChannelCommand.MessageReceived -> unhandled(cmd)
             is ChannelCommand.WatchReceived -> when (state) {
                 is ChannelStateWithCommitments -> when (val watch = cmd.watch) {
-                    is WatchEventConfirmed -> {
-                        if (watch.event is BITCOIN_FUNDING_DEPTHOK) {
+                    is WatchEventConfirmed -> when {
+                        watch.event is BITCOIN_FUNDING_DEPTHOK -> {
                             when (val res = state.run { acceptFundingTxConfirmed(watch) }) {
                                 is Either.Left -> Pair(this@Offline, listOf())
                                 is Either.Right -> {
@@ -75,26 +75,32 @@ data class Offline(val state: PersistedChannelState) : ChannelState() {
                                     Pair(this@Offline.copy(state = nextState), actions + listOf(ChannelAction.Storage.StoreState(nextState)))
                                 }
                             }
-                        } else {
-                            Pair(this@Offline, listOf())
                         }
+                        state is Negotiating && state.publishedClosingTxs.any { it.tx.txid == watch.tx.txid } -> {
+                            // One of our published transactions confirmed, the channel is now closed.
+                            state.run { completeMutualClose(publishedClosingTxs.first { it.tx.txid == watch.tx.txid }) }
+                        }
+                        state is Negotiating && state.proposedClosingTxs.flatMap { it.all }.any { it.tx.txid == watch.tx.txid } -> {
+                            // A transaction that we proposed for which they didn't send us their signature was confirmed, the channel is now closed.
+                            state.run { completeMutualClose(getMutualClosePublished(watch.tx)) }
+                        }
+                        else -> Pair(this@Offline, listOf())
                     }
                     is WatchEventSpent -> when {
-                        state is Negotiating && state.closingTxProposed.flatten().any { it.unsignedTx.tx.txid == watch.tx.txid } -> {
-                            logger.info { "closing tx published: closingTxId=${watch.tx.txid}" }
-                            val closingTx = state.getMutualClosePublished(watch.tx)
-                            val nextState = Closing(
-                                state.commitments,
-                                waitingSinceBlock = currentBlockHeight.toLong(),
-                                mutualCloseProposed = state.closingTxProposed.flatten().map { it.unsignedTx },
-                                mutualClosePublished = listOf(closingTx)
-                            )
+                        state is Negotiating && state.publishedClosingTxs.any { it.tx.txid == watch.tx.txid } -> {
+                            // This is one of the transactions we already published, we have nothing to do.
+                            Pair(this@Offline, listOf())
+                        }
+                        state is Negotiating && state.proposedClosingTxs.flatMap { it.all }.any { it.tx.txid == watch.tx.txid } -> {
+                            // They published one of our closing transactions without sending us their signature.
+                            val closingTx = state.run { getMutualClosePublished(watch.tx) }
+                            val nextState = state.copy(publishedClosingTxs = state.publishedClosingTxs + closingTx)
                             val actions = listOf(
                                 ChannelAction.Storage.StoreState(nextState),
                                 ChannelAction.Blockchain.PublishTx(closingTx),
                                 ChannelAction.Blockchain.SendWatch(WatchConfirmed(channelId, watch.tx, staticParams.nodeParams.minDepthBlocks.toLong(), BITCOIN_TX_CONFIRMED(watch.tx)))
                             )
-                            Pair(nextState, actions)
+                            Pair(Offline(nextState), actions)
                         }
                         else -> {
                             val (nextState, actions) = state.run { handlePotentialForceClose(watch) }

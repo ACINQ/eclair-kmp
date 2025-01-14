@@ -43,7 +43,7 @@ import fr.acinq.lightning.transactions.Transactions.makeClaimHtlcSuccessTx
 import fr.acinq.lightning.transactions.Transactions.makeClaimHtlcTimeoutTx
 import fr.acinq.lightning.transactions.Transactions.makeClaimLocalDelayedOutputTx
 import fr.acinq.lightning.transactions.Transactions.makeClaimRemoteDelayedOutputTx
-import fr.acinq.lightning.transactions.Transactions.makeClosingTx
+import fr.acinq.lightning.transactions.Transactions.makeClosingTxs
 import fr.acinq.lightning.transactions.Transactions.makeCommitTx
 import fr.acinq.lightning.transactions.Transactions.makeCommitTxOutputs
 import fr.acinq.lightning.transactions.Transactions.makeHtlcPenaltyTx
@@ -650,54 +650,63 @@ class TransactionsTestsCommon : LightningTestSuite() {
 
     @Test
     fun `find our output in closing tx`() {
-        val localPubKeyScript = write(pay2wpkh(PrivateKey(randomBytes32()).publicKey()))
-        val remotePubKeyScript = write(pay2wpkh(PrivateKey(randomBytes32()).publicKey()))
+        val localPubKeyScript = write(pay2wpkh(PrivateKey(randomBytes32()).publicKey())).byteVector()
+        val remotePubKeyScript = write(pay2wpkh(PrivateKey(randomBytes32()).publicKey())).byteVector()
 
         run {
-            // Different amounts, both outputs untrimmed, local is the initiator:
+            // Different amounts, both outputs untrimmed, local is closer:
             val spec = CommitmentSpec(setOf(), feerate, 150_000_000.msat, 250_000_000.msat)
-            val closingTx = makeClosingTx(commitInput, localPubKeyScript, remotePubKeyScript, localPaysClosingFees = true, localDustLimit, 1000.sat, spec)
-            assertEquals(2, closingTx.tx.txOut.size)
-            assertNotNull(closingTx.toLocalIndex)
-            assertEquals(localPubKeyScript.toByteVector(), closingTx.toLocalOutput!!.publicKeyScript)
-            assertEquals(149_000.sat, closingTx.toLocalOutput!!.amount) // initiator pays the fee
-            val toRemoteIndex = (closingTx.toLocalIndex!! + 1) % 2
-            assertEquals(250_000.sat, closingTx.tx.txOut[toRemoteIndex].amount)
+            val closingTxs = makeClosingTxs(commitInput, spec, Transactions.ClosingTxFee.PaidByUs(5_000.sat), 0, localPubKeyScript, remotePubKeyScript)
+            assertNotNull(closingTxs.localAndRemote)
+            assertNotNull(closingTxs.localOnly)
+            assertNull(closingTxs.remoteOnly)
+            val localAndRemote = closingTxs.localAndRemote?.toLocalOutput!!
+            assertEquals(localPubKeyScript, localAndRemote.publicKeyScript)
+            assertEquals(145_000.sat, localAndRemote.amount)
+            val localOnly = closingTxs.localOnly?.toLocalOutput!!
+            assertEquals(localPubKeyScript, localOnly.publicKeyScript)
+            assertEquals(145_000.sat, localOnly.amount)
         }
         run {
-            // Same amounts, both outputs untrimmed, local is not the initiator:
-            val spec = CommitmentSpec(setOf(), feerate, 150_000_000.msat, 150_000_000.msat)
-            val closingTx = makeClosingTx(commitInput, localPubKeyScript, remotePubKeyScript, localPaysClosingFees = false, localDustLimit, 1000.sat, spec)
-            assertEquals(2, closingTx.tx.txOut.size)
-            assertNotNull(closingTx.toLocalIndex)
-            assertEquals(localPubKeyScript.toByteVector(), closingTx.toLocalOutput!!.publicKeyScript)
-            assertEquals(150_000.sat, closingTx.toLocalOutput!!.amount)
-            val toRemoteIndex = (closingTx.toLocalIndex!! + 1) % 2
-            assertEquals(149_000.sat, closingTx.tx.txOut[toRemoteIndex].amount)
+            // Same amounts, both outputs untrimmed, remote is closer:
+            val spec = CommitmentSpec(setOf(), feerate, 150_000_000.msat, 250_000_000.msat)
+            val closingTxs = makeClosingTxs(commitInput, spec, Transactions.ClosingTxFee.PaidByThem(5_000.sat), 0, localPubKeyScript, remotePubKeyScript)
+            assertNotNull(closingTxs.localAndRemote)
+            assertNotNull(closingTxs.localOnly)
+            assertNull(closingTxs.remoteOnly)
+            val localAndRemote = closingTxs.localAndRemote?.toLocalOutput!!
+            assertEquals(localPubKeyScript, localAndRemote.publicKeyScript)
+            assertEquals(150_000.sat, localAndRemote.amount)
+            val localOnly = closingTxs.localOnly?.toLocalOutput!!
+            assertEquals(localPubKeyScript, localOnly.publicKeyScript)
+            assertEquals(150_000.sat, localOnly.amount)
         }
         run {
             // Their output is trimmed:
-            val spec = CommitmentSpec(setOf(), feerate, 150_000_000.msat, 1_000.msat)
-            val closingTx = makeClosingTx(commitInput, localPubKeyScript, remotePubKeyScript, localPaysClosingFees = false, localDustLimit, 1000.sat, spec)
-            assertEquals(1, closingTx.tx.txOut.size)
-            assertNotNull(closingTx.toLocalOutput)
-            assertEquals(localPubKeyScript.toByteVector(), closingTx.toLocalOutput!!.publicKeyScript)
-            assertEquals(150_000.sat, closingTx.toLocalOutput!!.amount)
-            assertEquals(0, closingTx.toLocalIndex!!)
+            val spec = CommitmentSpec(setOf(), feerate, 150_000_000.msat, 1_000_000.msat)
+            val closingTxs = makeClosingTxs(commitInput, spec, Transactions.ClosingTxFee.PaidByThem(800.sat), 0, localPubKeyScript, remotePubKeyScript)
+            assertEquals(1, closingTxs.all.size)
+            assertNotNull(closingTxs.localOnly)
+            assertEquals(1, closingTxs.localOnly!!.tx.txOut.size)
+            val toLocal = closingTxs.localOnly?.toLocalOutput!!
+            assertEquals(localPubKeyScript, toLocal.publicKeyScript)
+            assertEquals(150_000.sat, toLocal.amount)
         }
         run {
             // Our output is trimmed:
-            val spec = CommitmentSpec(setOf(), feerate, 50_000.msat, 150_000_000.msat)
-            val closingTx = makeClosingTx(commitInput, localPubKeyScript, remotePubKeyScript, localPaysClosingFees = true, localDustLimit, 1000.sat, spec)
-            assertEquals(1, closingTx.tx.txOut.size)
-            assertNull(closingTx.toLocalOutput)
+            val spec = CommitmentSpec(setOf(), feerate, 1_000_000.msat, 150_000_000.msat)
+            val closingTxs = makeClosingTxs(commitInput, spec, Transactions.ClosingTxFee.PaidByUs(800.sat), 0, localPubKeyScript, remotePubKeyScript)
+            assertEquals(1, closingTxs.all.size)
+            assertNotNull(closingTxs.remoteOnly)
+            assertNull(closingTxs.remoteOnly?.toLocalOutput)
         }
         run {
             // Both outputs are trimmed:
             val spec = CommitmentSpec(setOf(), feerate, 50_000.msat, 10_000.msat)
-            val closingTx = makeClosingTx(commitInput, localPubKeyScript, remotePubKeyScript, localPaysClosingFees = true, localDustLimit, 1000.sat, spec)
-            assertTrue(closingTx.tx.txOut.isEmpty())
-            assertNull(closingTx.toLocalOutput)
+            val closingTxs = makeClosingTxs(commitInput, spec, Transactions.ClosingTxFee.PaidByUs(10.sat), 0, localPubKeyScript, remotePubKeyScript)
+            assertNull(closingTxs.localAndRemote)
+            assertNull(closingTxs.localOnly)
+            assertNull(closingTxs.remoteOnly)
         }
     }
 

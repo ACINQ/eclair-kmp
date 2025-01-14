@@ -13,7 +13,6 @@ import fr.acinq.lightning.logging.LoggingContext
 import fr.acinq.lightning.transactions.Scripts
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.*
 import fr.acinq.lightning.utils.toMilliSatoshi
-import fr.acinq.lightning.wire.ClosingSigned
 
 /**
  * Details about a force-close where we published our commitment.
@@ -370,10 +369,6 @@ data class LocalParams(
         features = nodeParams.features.initFeatures()
     )
 
-    // The node responsible for the commit tx fees is also the node paying the mutual close fees.
-    // The other node's balance may be empty, which wouldn't allow them to pay the closing fees.
-    val paysClosingFees: Boolean = paysCommitTxFees
-
     fun channelKeys(keyManager: KeyManager) = keyManager.channelKeys(fundingKeyPath)
 }
 
@@ -396,8 +391,6 @@ data class RemoteParams(
  * This is not part of the BOLTs and won't be needed anymore once commitment transactions don't pay any on-chain fees.
  */
 data class ChannelFlags(val announceChannel: Boolean, val nonInitiatorPaysCommitFees: Boolean)
-
-data class ClosingTxProposed(val unsignedTx: ClosingTx, val localClosingSigned: ClosingSigned)
 
 /**
  * @param miningFee fee paid to miners for the underlying on-chain transaction.

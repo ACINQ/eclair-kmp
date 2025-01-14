@@ -77,7 +77,7 @@ class QuiescenceTestsCommon : LightningTestSuite() {
         val cmds = listOf(
             ChannelCommand.Htlc.Add(1_000_000.msat, Lightning.randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(alice.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID()),
             ChannelCommand.Commitment.UpdateFee(FeeratePerKw(100.sat)),
-            ChannelCommand.Close.MutualClose(null, null),
+            ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw),
         )
         cmds.forEach {
             alice1.process(it).second.findCommandError<ForbiddenDuringSplice>()
@@ -92,7 +92,7 @@ class QuiescenceTestsCommon : LightningTestSuite() {
         val cmds = listOf(
             ChannelCommand.Htlc.Add(1_000_000.msat, Lightning.randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(alice.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket, UUID.randomUUID()),
             ChannelCommand.Commitment.UpdateFee(FeeratePerKw(100.sat)),
-            ChannelCommand.Close.MutualClose(null, null)
+            ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw)
         )
         cmds.forEach {
             alice1.process(it).second.findCommandError<ForbiddenDuringSplice>()
@@ -314,16 +314,16 @@ class QuiescenceTestsCommon : LightningTestSuite() {
         val (alice1, actionsAlice1) = alice.process(createSpliceCommand(alice))
         val stfuAlice = actionsAlice1.findOutgoingMessage<Stfu>()
         // But Bob is concurrently initiating a mutual close, which should "win".
-        val (bob1, actionsBob1) = bob.process(ChannelCommand.Close.MutualClose(null, null))
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw))
         val shutdownBob = actionsBob1.hasOutgoingMessage<Shutdown>()
         val (bob2, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(stfuAlice))
         assertNull(actionsBob2.findOutgoingMessageOpt<Stfu>())
         val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(shutdownBob))
         assertIs<Negotiating>(alice2.state)
         val shutdownAlice = actionsAlice2.findOutgoingMessage<Shutdown>()
-        actionsAlice2.findOutgoingMessage<ClosingSigned>()
         val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(shutdownAlice))
         assertIs<Negotiating>(bob3.state)
+        actionsBob3.findOutgoingMessage<ClosingComplete>()
         actionsBob3.has<ChannelAction.Storage.StoreState>()
     }
 

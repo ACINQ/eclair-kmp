@@ -1,11 +1,9 @@
 package fr.acinq.lightning.channel.states
 
-import fr.acinq.bitcoin.Satoshi
 import fr.acinq.bitcoin.Transaction
 import fr.acinq.bitcoin.updated
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.blockchain.*
-import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.channel.Helpers.Closing.claimCurrentLocalCommitTxOutputs
 import fr.acinq.lightning.channel.Helpers.Closing.claimRemoteCommitTxOutputs
@@ -15,23 +13,10 @@ import fr.acinq.lightning.channel.Helpers.Closing.extractPreimages
 import fr.acinq.lightning.channel.Helpers.Closing.onChainOutgoingHtlcs
 import fr.acinq.lightning.channel.Helpers.Closing.overriddenOutgoingHtlcs
 import fr.acinq.lightning.channel.Helpers.Closing.timedOutHtlcs
-import fr.acinq.lightning.transactions.Transactions
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClosingTx
 import fr.acinq.lightning.utils.getValue
 import fr.acinq.lightning.wire.ChannelReestablish
 import fr.acinq.lightning.wire.Error
-
-data class ClosingFees(val preferred: Satoshi, val min: Satoshi, val max: Satoshi) {
-    constructor(preferred: Satoshi) : this(preferred, preferred, preferred)
-}
-
-data class ClosingFeerates(val preferred: FeeratePerKw, val min: FeeratePerKw, val max: FeeratePerKw) {
-    fun computeFees(closingTxWeight: Int): ClosingFees = ClosingFees(Transactions.weight2fee(preferred, closingTxWeight), Transactions.weight2fee(min, closingTxWeight), Transactions.weight2fee(max, closingTxWeight))
-
-    companion object {
-        operator fun invoke(preferred: FeeratePerKw): ClosingFeerates = ClosingFeerates(preferred, preferred / 2, preferred * 2)
-    }
-}
 
 sealed class ClosingType
 data class MutualClose(val tx: ClosingTx) : ClosingType()

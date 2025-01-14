@@ -8,8 +8,6 @@ import fr.acinq.bitcoin.Script.write
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.bitcoin.utils.Try
 import fr.acinq.bitcoin.utils.runTrying
-import fr.acinq.lightning.Feature
-import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.NodeParams
 import fr.acinq.lightning.blockchain.BITCOIN_OUTPUT_SPENT
@@ -21,13 +19,11 @@ import fr.acinq.lightning.blockchain.fee.FeerateTolerance
 import fr.acinq.lightning.blockchain.fee.OnChainFeerates
 import fr.acinq.lightning.channel.Helpers.Closing.inputsAlreadySpent
 import fr.acinq.lightning.channel.states.Channel
-import fr.acinq.lightning.channel.states.ClosingFeerates
-import fr.acinq.lightning.channel.states.ClosingFees
 import fr.acinq.lightning.crypto.Bolt3Derivation.deriveForCommitment
 import fr.acinq.lightning.crypto.Bolt3Derivation.deriveForRevocation
 import fr.acinq.lightning.crypto.KeyManager
 import fr.acinq.lightning.crypto.ShaChain
-import fr.acinq.lightning.logging.*
+import fr.acinq.lightning.logging.LoggingContext
 import fr.acinq.lightning.transactions.*
 import fr.acinq.lightning.transactions.Scripts.multiSig2of2
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClaimHtlcDelayedOutputPenaltyTx
@@ -37,7 +33,10 @@ import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.Htl
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx
 import fr.acinq.lightning.transactions.Transactions.commitTxFee
 import fr.acinq.lightning.transactions.Transactions.makeCommitTxOutputs
-import fr.acinq.lightning.utils.*
+import fr.acinq.lightning.utils.getValue
+import fr.acinq.lightning.utils.sat
+import fr.acinq.lightning.utils.sum
+import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.*
 import kotlin.math.max
 
@@ -221,7 +220,14 @@ object Helpers {
             )
         }
 
-        data class PairOfCommitTxs(val localSpec: CommitmentSpec, val localCommitTx: Transactions.TransactionWithInputInfo.CommitTx, val localHtlcTxs: List<Transactions.TransactionWithInputInfo.HtlcTx>, val remoteSpec: CommitmentSpec, val remoteCommitTx: Transactions.TransactionWithInputInfo.CommitTx, val remoteHtlcTxs: List<Transactions.TransactionWithInputInfo.HtlcTx>)
+        data class PairOfCommitTxs(
+            val localSpec: CommitmentSpec,
+            val localCommitTx: Transactions.TransactionWithInputInfo.CommitTx,
+            val localHtlcTxs: List<Transactions.TransactionWithInputInfo.HtlcTx>,
+            val remoteSpec: CommitmentSpec,
+            val remoteCommitTx: Transactions.TransactionWithInputInfo.CommitTx,
+            val remoteHtlcTxs: List<Transactions.TransactionWithInputInfo.HtlcTx>
+        )
 
         /**
          * Creates both sides' first commitment transaction.
@@ -247,7 +253,7 @@ object Helpers {
             remotePerCommitmentPoint: PublicKey
         ): Either<ChannelException, PairOfCommitTxs> {
             val localSpec = CommitmentSpec(localHtlcs, commitTxFeerate, toLocal = toLocal, toRemote = toRemote)
-            val remoteSpec = CommitmentSpec(localHtlcs.map{ it.opposite() }.toSet(), commitTxFeerate, toLocal = toRemote, toRemote = toLocal)
+            val remoteSpec = CommitmentSpec(localHtlcs.map { it.opposite() }.toSet(), commitTxFeerate, toLocal = toRemote, toRemote = toLocal)
 
             if (!localParams.paysCommitTxFees) {
                 // They are responsible for paying the commitment transaction fee: we need to make sure they can afford it!
@@ -314,74 +320,123 @@ object Helpers {
 
         fun isValidFinalScriptPubkey(scriptPubKey: ByteVector, allowAnySegwit: Boolean, allowOpReturn: Boolean): Boolean = isValidFinalScriptPubkey(scriptPubKey.toByteArray(), allowAnySegwit, allowOpReturn)
 
-        private fun firstClosingFee(commitment: FullCommitment, localScriptPubkey: ByteArray, remoteScriptPubkey: ByteArray, requestedFeerate: ClosingFeerates): ClosingFees {
-            // this is just to estimate the weight which depends on the size of the pubkey scripts
-            val dummyClosingTx = Transactions.makeClosingTx(commitment.commitInput, localScriptPubkey, remoteScriptPubkey, commitment.params.localParams.paysClosingFees, 0.sat, 0.sat, commitment.localCommit.spec)
-            val closingWeight = Transaction.weight(Transactions.addSigs(dummyClosingTx, dummyPublicKey, commitment.remoteFundingPubkey, Transactions.PlaceHolderSig, Transactions.PlaceHolderSig).tx)
-            return requestedFeerate.computeFees(closingWeight)
-        }
-
-        fun firstClosingFee(commitment: FullCommitment, localScriptPubkey: ByteVector, remoteScriptPubkey: ByteVector, requestedFeerate: ClosingFeerates): ClosingFees =
-            firstClosingFee(commitment, localScriptPubkey.toByteArray(), remoteScriptPubkey.toByteArray(), requestedFeerate)
-
-        fun nextClosingFee(localClosingFee: Satoshi, remoteClosingFee: Satoshi): Satoshi = ((localClosingFee + remoteClosingFee) / 4) * 2
-
-        fun makeFirstClosingTx(
+        /** We are the closer: we sign closing transactions for which we pay the fees. */
+        fun makeClosingTxs(
             channelKeys: KeyManager.ChannelKeys,
             commitment: FullCommitment,
-            localScriptPubkey: ByteArray,
-            remoteScriptPubkey: ByteArray,
-            requestedFeerate: ClosingFeerates
-        ): Pair<ClosingTx, ClosingSigned> {
-            val closingFees = firstClosingFee(commitment, localScriptPubkey, remoteScriptPubkey, requestedFeerate)
-            return makeClosingTx(channelKeys, commitment, localScriptPubkey, remoteScriptPubkey, closingFees)
-        }
-
-        fun makeClosingTx(
-            channelKeys: KeyManager.ChannelKeys,
-            commitment: FullCommitment,
-            localScriptPubkey: ByteArray,
-            remoteScriptPubkey: ByteArray,
-            closingFees: ClosingFees
-        ): Pair<ClosingTx, ClosingSigned> {
-            val allowAnySegwit = Features.canUseFeature(commitment.params.localParams.features, commitment.params.remoteParams.features, Feature.ShutdownAnySegwit)
-            val allowOpReturn = Features.canUseFeature(commitment.params.localParams.features, commitment.params.remoteParams.features, Feature.SimpleClose)
-            require(isValidFinalScriptPubkey(localScriptPubkey, allowAnySegwit, allowOpReturn)) { "invalid localScriptPubkey" }
-            require(isValidFinalScriptPubkey(remoteScriptPubkey, allowAnySegwit, allowOpReturn)) { "invalid remoteScriptPubkey" }
-            val dustLimit = commitment.params.localParams.dustLimit.max(commitment.params.remoteParams.dustLimit)
-            val closingTx = Transactions.makeClosingTx(commitment.commitInput, localScriptPubkey, remoteScriptPubkey, commitment.params.localParams.paysClosingFees, dustLimit, closingFees.preferred, commitment.localCommit.spec)
-            val localClosingSig = Transactions.sign(closingTx, channelKeys.fundingKey(commitment.fundingTxIndex))
-            val closingSigned = ClosingSigned(commitment.channelId, closingFees.preferred, localClosingSig, TlvStream(ClosingSignedTlv.FeeRange(closingFees.min, closingFees.max)))
-            return Pair(closingTx, closingSigned)
-        }
-
-        fun checkClosingSignature(
-            channelKeys: KeyManager.ChannelKeys,
-            commitment: FullCommitment,
-            localScriptPubkey: ByteArray,
-            remoteScriptPubkey: ByteArray,
-            remoteClosingFee: Satoshi,
-            remoteClosingSig: ByteVector64
-        ): Either<ChannelException, Pair<ClosingTx, ClosingSigned>> {
-            val (closingTx, closingSigned) = makeClosingTx(channelKeys, commitment, localScriptPubkey, remoteScriptPubkey, ClosingFees(remoteClosingFee))
-            return if (checkClosingDustAmounts(closingTx)) {
-                val signedClosingTx = Transactions.addSigs(closingTx, channelKeys.fundingPubKey(commitment.fundingTxIndex), commitment.remoteFundingPubkey, closingSigned.signature, remoteClosingSig)
-                when (Transactions.checkSpendable(signedClosingTx)) {
-                    is Try.Success -> Either.Right(Pair(signedClosingTx, closingSigned))
-                    is Try.Failure -> Either.Left(InvalidCloseSignature(commitment.channelId, signedClosingTx.tx.txid))
+            localScriptPubkey: ByteVector,
+            remoteScriptPubkey: ByteVector,
+            feerate: FeeratePerKw,
+            lockTime: Long,
+        ): Either<ChannelException, Pair<Transactions.ClosingTxs, ClosingComplete>> {
+            // We must convert the feerate to a fee: we must build dummy transactions to compute their weight.
+            val closingFee = run {
+                val dummyClosingTxs = Transactions.makeClosingTxs(commitment.commitInput, commitment.localCommit.spec, Transactions.ClosingTxFee.PaidByUs(0.sat), lockTime, localScriptPubkey, remoteScriptPubkey)
+                when (val dummyTx = dummyClosingTxs.preferred) {
+                    null -> return Either.Left(CannotGenerateClosingTx(commitment.channelId))
+                    else -> {
+                        val dummySignedTx = Transactions.addSigs(dummyTx, Transactions.PlaceHolderPubKey, Transactions.PlaceHolderPubKey, Transactions.PlaceHolderSig, Transactions.PlaceHolderSig)
+                        Transactions.ClosingTxFee.PaidByUs(Transactions.weight2fee(feerate, dummySignedTx.tx.weight()))
+                    }
                 }
-            } else {
-                Either.Left(InvalidCloseAmountBelowDust(commitment.channelId, closingTx.tx.txid))
+            }
+            // Now that we know the fee we're ready to pay, we can create our closing transactions.
+            val closingTxs = Transactions.makeClosingTxs(commitment.commitInput, commitment.localCommit.spec, closingFee, lockTime, localScriptPubkey, remoteScriptPubkey)
+            // The actual fee we're paying will be bigger than the one we previously computed if we omit our output.
+            val actualFee = closingTxs.preferred?.fee ?: 0.sat
+            if (actualFee == 0.sat) {
+                return Either.Left(CannotGenerateClosingTx(commitment.channelId))
+            }
+            val localFundingKey = channelKeys.fundingKey(commitment.fundingTxIndex)
+            val tlvs = TlvStream(
+                setOfNotNull(
+                    closingTxs.localAndRemote?.let { tx -> ClosingCompleteTlv.CloserAndCloseeOutputs(Transactions.sign(tx, localFundingKey)) },
+                    closingTxs.localOnly?.let { tx -> ClosingCompleteTlv.CloserOutputOnly(Transactions.sign(tx, localFundingKey)) },
+                    closingTxs.remoteOnly?.let { tx -> ClosingCompleteTlv.CloseeOutputOnly(Transactions.sign(tx, localFundingKey)) },
+                )
+            )
+            val closingComplete = ClosingComplete(commitment.channelId, localScriptPubkey, remoteScriptPubkey, actualFee, lockTime, tlvs)
+            return Either.Right(Pair(closingTxs, closingComplete))
+        }
+
+        /**
+         * We are the closee: we choose one of the closer's transactions and sign it back.
+         *
+         * Callers should ignore failures: since the protocol is fully asynchronous, failures here simply mean that they
+         * are not using our latest script (race condition between our closing_complete and theirs).
+         */
+        fun signClosingTx(
+            channelKeys: KeyManager.ChannelKeys,
+            commitment: FullCommitment,
+            localScriptPubkey: ByteVector,
+            remoteScriptPubkey: ByteVector,
+            closingComplete: ClosingComplete
+        ): Either<ChannelException, Pair<ClosingTx, ClosingSig>> {
+            val closingFee = Transactions.ClosingTxFee.PaidByThem(closingComplete.fees)
+            val closingTxs = Transactions.makeClosingTxs(commitment.commitInput, commitment.localCommit.spec, closingFee, closingComplete.lockTime, localScriptPubkey, remoteScriptPubkey)
+            // If our output isn't dust, they must provide a signature for a transaction that includes it.
+            // Note that we're the closee, so we look for signatures including the closee output.
+            if (closingTxs.localAndRemote != null && closingTxs.localOnly != null && closingComplete.closerAndCloseeOutputsSig == null && closingComplete.closeeOutputOnlySig == null) {
+                return Either.Left(MissingCloseSignature(commitment.channelId))
+            }
+            if (closingTxs.localAndRemote != null && closingTxs.localOnly == null && closingComplete.closerAndCloseeOutputsSig == null) {
+                return Either.Left(MissingCloseSignature(commitment.channelId))
+            }
+            if (closingTxs.localAndRemote == null && closingTxs.localOnly != null && closingComplete.closeeOutputOnlySig == null) {
+                return Either.Left(MissingCloseSignature(commitment.channelId))
+            }
+            // We choose the closing signature that matches our preferred closing transaction.
+            val closingTxsWithSigs = listOfNotNull<Triple<ClosingTx, ByteVector64, (ByteVector64) -> ClosingSigTlv>>(
+                closingComplete.closerAndCloseeOutputsSig?.let { remoteSig -> closingTxs.localAndRemote?.let { tx -> Triple(tx, remoteSig) { localSig: ByteVector64 -> ClosingSigTlv.CloserAndCloseeOutputs(localSig) } } },
+                closingComplete.closeeOutputOnlySig?.let { remoteSig -> closingTxs.localOnly?.let { tx -> Triple(tx, remoteSig) { localSig -> ClosingSigTlv.CloseeOutputOnly(localSig) } } },
+                closingComplete.closerOutputOnlySig?.let { remoteSig -> closingTxs.remoteOnly?.let { tx -> Triple(tx, remoteSig) { localSig -> ClosingSigTlv.CloserOutputOnly(localSig) } } },
+            )
+            return when (val preferred = closingTxsWithSigs.firstOrNull()) {
+                null -> Either.Left(MissingCloseSignature(commitment.channelId))
+                else -> {
+                    val (closingTx, remoteSig, sigToTlv) = preferred
+                    val localFundingKey = channelKeys.fundingKey(commitment.fundingTxIndex)
+                    val localSig = Transactions.sign(closingTx, localFundingKey)
+                    val signedClosingTx = Transactions.addSigs(closingTx, localFundingKey.publicKey(), commitment.remoteFundingPubkey, localSig, remoteSig)
+                    when (Transactions.checkSpendable(signedClosingTx)) {
+                        is Try.Failure -> Either.Left(InvalidCloseSignature(commitment.channelId, signedClosingTx.tx.txid))
+                        is Try.Success -> Either.Right(Pair(signedClosingTx, ClosingSig(commitment.channelId, remoteScriptPubkey, localScriptPubkey, closingComplete.fees, closingComplete.lockTime, TlvStream(sigToTlv(localSig)))))
+                    }
+                }
             }
         }
 
         /**
-         * Check that all closing outputs are above bitcoin's dust limit for their script type, otherwise there is a risk
-         * that the closing transaction will not be relayed to miners' mempool and will not confirm.
-         * The various dust limits are detailed in https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#dust-limits
+         * We are the closer: they sent us their signature so we should now have a fully signed closing transaction.
+         *
+         * Callers should ignore failures: since the protocol is fully asynchronous, failures here simply mean that we
+         * sent another closing_complete before receiving their closing_sig, which is now obsolete: we ignore it and wait
+         * for their next closing_sig that will match our latest closing_complete.
          */
-        fun checkClosingDustAmounts(closingTx: ClosingTx): Boolean {
-            return closingTx.tx.txOut.all { txOut -> txOut.amount >= Transactions.dustLimit(txOut.publicKeyScript) }
+        fun receiveClosingSig(
+            channelKeys: KeyManager.ChannelKeys,
+            commitment: FullCommitment,
+            closingTxs: Transactions.ClosingTxs,
+            closingSig: ClosingSig
+        ): Either<ChannelException, ClosingTx> {
+            val closingTxsWithSig = listOfNotNull(
+                closingSig.closerAndCloseeOutputsSig?.let { sig -> closingTxs.localAndRemote?.let { tx -> Pair(tx, sig) } },
+                closingSig.closerOutputOnlySig?.let { sig -> closingTxs.localOnly?.let { tx -> Pair(tx, sig) } },
+                closingSig.closeeOutputOnlySig?.let { sig -> closingTxs.remoteOnly?.let { tx -> Pair(tx, sig) } },
+            )
+            return when (val preferred = closingTxsWithSig.firstOrNull()) {
+                null -> Either.Left(MissingCloseSignature(commitment.channelId))
+                else -> {
+                    val (closingTx, remoteSig) = preferred
+                    val localFundingKey = channelKeys.fundingKey(commitment.fundingTxIndex)
+                    val localSig = Transactions.sign(closingTx, localFundingKey)
+                    val signedClosingTx = Transactions.addSigs(closingTx, localFundingKey.publicKey(), commitment.remoteFundingPubkey, localSig, remoteSig)
+                    when (Transactions.checkSpendable(signedClosingTx)) {
+                        is Try.Failure -> Either.Left(InvalidCloseSignature(commitment.channelId, signedClosingTx.tx.txid))
+                        is Try.Success -> Either.Right(signedClosingTx)
+                    }
+                }
+            }
         }
 
         /**

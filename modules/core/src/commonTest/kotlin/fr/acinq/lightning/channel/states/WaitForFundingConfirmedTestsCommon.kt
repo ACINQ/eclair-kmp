@@ -331,7 +331,7 @@ class WaitForFundingConfirmedTestsCommon : LightningTestSuite() {
     fun `recv ChannelCommand_Close_MutualClose`() {
         val (alice, bob) = init(ChannelType.SupportedChannelType.AnchorOutputs)
         listOf(alice, bob).forEach { state ->
-            val (state1, actions1) = state.process(ChannelCommand.Close.MutualClose(null, null))
+            val (state1, actions1) = state.process(ChannelCommand.Close.MutualClose(null, TestConstants.feeratePerKw))
             assertEquals(state, state1)
             actions1.hasCommandError<CommandUnavailableInThisState>()
         }

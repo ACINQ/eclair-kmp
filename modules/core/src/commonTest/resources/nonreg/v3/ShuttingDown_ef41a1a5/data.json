@@ -285,5 +285,5 @@
         "channelId": "2f7c825b61cbbf0e685aef20f8923a8cd28943346e59301b629cc89b4e27cdbd",
         "scriptPubKey": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c"
     },
-    "closingFeerates": null
+    "closingFeerate": null
 }

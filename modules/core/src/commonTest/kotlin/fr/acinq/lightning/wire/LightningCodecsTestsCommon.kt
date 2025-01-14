@@ -684,54 +684,6 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
     }
 
     @Test
-    fun `encode - decode closing_signed`() {
-        val defaultSig = ByteVector64("01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101")
-        val testCases = listOf(
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 0000000000000000 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") to ClosingSigned(
-                ByteVector32.One,
-                0.sat,
-                ByteVector64.Zeroes
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000003e8 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") to ClosingSigned(
-                ByteVector32.One,
-                1000.sat,
-                ByteVector64.Zeroes
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000005dc 01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101") to ClosingSigned(
-                ByteVector32.One,
-                1500.sat,
-                defaultSig
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000005dc 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 0110000000000000006400000000000007d0") to ClosingSigned(
-                ByteVector32.One,
-                1500.sat,
-                ByteVector64.Zeroes,
-                TlvStream(ClosingSignedTlv.FeeRange(100.sat, 2000.sat))
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 00000000000003e8 01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101 0110000000000000006400000000000007d0") to ClosingSigned(
-                ByteVector32.One,
-                1000.sat,
-                defaultSig,
-                TlvStream(ClosingSignedTlv.FeeRange(100.sat, 2000.sat))
-            ),
-            Hex.decode("0027 0100000000000000000000000000000000000000000000000000000000000000 0000000000000064 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 0110000000000000006400000000000003e8 030401020304") to ClosingSigned(
-                ByteVector32.One,
-                100.sat,
-                ByteVector64.Zeroes,
-                TlvStream(setOf(ClosingSignedTlv.FeeRange(100.sat, 1000.sat)), setOf(GenericTlv(3, ByteVector("01020304"))))
-            ),
-        )
-
-        testCases.forEach {
-            val decoded = LightningMessage.decode(it.first)
-            assertNotNull(decoded)
-            assertEquals(decoded, it.second)
-            val reEncoded = LightningMessage.encode(decoded)
-            assertContentEquals(reEncoded, it.first)
-        }
-    }
-
-    @Test
     fun `encode - decode closing messages`() {
         val channelId = ByteVector32("58a00a6f14e69a2e97b18cf76f755c8551fea9947cf7b6ece9d641013eba5f86")
         val sig1 = ByteVector64("01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101")
@@ -805,13 +757,6 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("01 02 0102") + Hex.decode("fe47010000 00") to Shutdown(channelId, randomData.toByteVector(), TlvStream(setOf(ShutdownTlv.ChannelData(EncryptedChannelData.empty)), setOf(GenericTlv(1, ByteVector("0102"))))),
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("fe47010000 07 cccccccccccccc") to Shutdown(channelId, randomData.toByteVector()).withChannelData(ByteVector("cccccccccccccc")),
             Hex.decode("0026") + channelId.toByteArray() + Hex.decode("002a") + randomData + Hex.decode("01 02 0102") + Hex.decode("fe47010000 07 cccccccccccccc") to Shutdown(channelId, randomData.toByteVector(), TlvStream(setOf(ShutdownTlv.ChannelData(EncryptedChannelData(ByteVector("cccccccccccccc")))), setOf(GenericTlv(1, ByteVector("0102"))))),
-            // closing_signed
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() to ClosingSigned(channelId, 123456789.sat, signature),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(), setOf(GenericTlv(3, ByteVector("0102"))))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("fe47010000 00") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(ClosingSignedTlv.ChannelData(EncryptedChannelData.empty))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") + Hex.decode("fe47010000 00") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(ClosingSignedTlv.ChannelData(EncryptedChannelData.empty)), setOf(GenericTlv(3, ByteVector("0102"))))),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingSigned(channelId, 123456789.sat, signature).withChannelData(ByteVector("cccccccccccccc")),
-            Hex.decode("0027") + channelId.toByteArray() + Hex.decode("00000000075bcd15") + signature.toByteArray() + Hex.decode("03 02 0102") + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingSigned(channelId, 123456789.sat, signature, TlvStream(setOf(ClosingSignedTlv.ChannelData(EncryptedChannelData(ByteVector("cccccccccccccc")))), setOf(GenericTlv(3, ByteVector("0102"))))),
             // closing_complete
             Hex.decode("0028") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 00") to ClosingComplete(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0, TlvStream(ClosingCompleteTlv.ChannelData(EncryptedChannelData.empty))),
             Hex.decode("0028") + channelId.toByteArray() + Hex.decode("0004deadbeef 0004deadbeef 0000000000000451 00000000") + Hex.decode("fe47010000 07 cccccccccccccc") to ClosingComplete(channelId, Hex.decode("deadbeef").byteVector(), Hex.decode("deadbeef").byteVector(), 1105.sat, 0).withChannelData(ByteVector("cccccccccccccc")),
@@ -840,7 +785,6 @@ class LightningCodecsTestsCommon : LightningTestSuite() {
             CommitSig(randomBytes32(), randomBytes64(), listOf()),
             RevokeAndAck(randomBytes32(), randomKey(), randomKey().publicKey()),
             Shutdown(randomBytes32(), ByteVector("deadbeef")),
-            ClosingSigned(randomBytes32(), 0.sat, randomBytes64()),
             ClosingComplete(randomBytes32(), ByteVector.empty, ByteVector.empty, 250.sat, 0),
             ClosingSig(randomBytes32(), ByteVector.empty, ByteVector.empty, 250.sat, 0),
         )

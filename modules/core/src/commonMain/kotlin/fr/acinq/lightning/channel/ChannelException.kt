@@ -1,9 +1,6 @@
 package fr.acinq.lightning.channel
 
-import fr.acinq.bitcoin.BlockHash
-import fr.acinq.bitcoin.ByteVector32
-import fr.acinq.bitcoin.Satoshi
-import fr.acinq.bitcoin.TxId
+import fr.acinq.bitcoin.*
 import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.MilliSatoshi
@@ -62,8 +59,10 @@ data class FeerateTooSmall                         (override val channelId: Byte
 data class FeerateTooDifferent                     (override val channelId: ByteVector32, val localFeeratePerKw: FeeratePerKw, val remoteFeeratePerKw: FeeratePerKw) : ChannelException(channelId, "local/remote feerates are too different: remoteFeeratePerKw=${remoteFeeratePerKw.toLong()} localFeeratePerKw=${localFeeratePerKw.toLong()}")
 data class InvalidCommitmentSignature              (override val channelId: ByteVector32, val txId: TxId) : ChannelException(channelId, "invalid commitment signature: txId=$txId")
 data class InvalidHtlcSignature                    (override val channelId: ByteVector32, val txId: TxId) : ChannelException(channelId, "invalid htlc signature: txId=$txId")
+data class CannotGenerateClosingTx                 (override val channelId: ByteVector32) : ChannelException(channelId, "failed to generate closing transaction: all outputs are trimmed")
+data class MissingCloseSignature                   (override val channelId: ByteVector32) : ChannelException(channelId, "closing_complete is missing a signature for a closing transaction including our output")
 data class InvalidCloseSignature                   (override val channelId: ByteVector32, val txId: TxId) : ChannelException(channelId, "invalid close signature: txId=$txId")
-data class InvalidCloseAmountBelowDust             (override val channelId: ByteVector32, val txId: TxId) : ChannelException(channelId, "invalid closing tx: some outputs are below dust: txId=$txId")
+data class InvalidCloseeScript                     (override val channelId: ByteVector32, val received: ByteVector, val expected: ByteVector) : ChannelException(channelId, "invalid closee script used in closing_complete: our latest script is $expected, you're using $received")
 data class CommitSigCountMismatch                  (override val channelId: ByteVector32, val expected: Int, val actual: Int) : ChannelException(channelId, "commit sig count mismatch: expected=$expected actual=$actual")
 data class HtlcSigCountMismatch                    (override val channelId: ByteVector32, val expected: Int, val actual: Int) : ChannelException(channelId, "htlc sig count mismatch: expected=$expected actual: $actual")
 data class ForcedLocalCommit                       (override val channelId: ByteVector32) : ChannelException(channelId, "forced local commit")

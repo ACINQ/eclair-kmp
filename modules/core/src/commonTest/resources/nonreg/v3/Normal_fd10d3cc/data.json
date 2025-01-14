@@ -262,6 +262,6 @@
         "scriptPubKey": "001405e0104aa726e34ff5cd3a6320d05c0862b5b01c"
     },
     "remoteShutdown": null,
-    "closingFeerates": null,
+    "closingFeerate": null,
     "spliceStatus": "None"
 }

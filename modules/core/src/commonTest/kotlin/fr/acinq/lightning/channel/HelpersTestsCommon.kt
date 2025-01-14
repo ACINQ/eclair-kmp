@@ -5,14 +5,12 @@ import fr.acinq.bitcoin.Bitcoin.computeP2PkhAddress
 import fr.acinq.bitcoin.Bitcoin.computeP2ShOfP2WpkhAddress
 import fr.acinq.bitcoin.Bitcoin.computeP2WpkhAddress
 import fr.acinq.lightning.Lightning.randomKey
-import fr.acinq.lightning.channel.Helpers.Closing.checkClosingDustAmounts
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.transactions.Transactions
 import fr.acinq.lightning.utils.sat
 import fr.acinq.secp256k1.Hex
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HelpersTestsCommon : LightningTestSuite() {
@@ -52,12 +50,16 @@ class HelpersTestsCommon : LightningTestSuite() {
 
     @Test
     fun `check closing tx amounts above dust`() {
-        val p2pkhBelowDust = listOf(TxOut(545.sat, Script.pay2pkh(randomKey().publicKey())))
-        val p2shBelowDust = listOf(TxOut(539.sat, Script.pay2sh(Hex.decode("0000000000000000000000000000000000000000"))))
-        val p2wpkhBelowDust = listOf(TxOut(293.sat, Script.pay2wpkh(randomKey().publicKey())))
-        val p2wshBelowDust = listOf(TxOut(329.sat, Script.pay2wsh(Hex.decode("0000000000000000000000000000000000000000"))))
-        val p2trBelowDust = listOf(TxOut(353.sat, Script.pay2tr(randomKey().publicKey().xOnly())))
-        val allOutputsAboveDust = listOf(
+        val outputsBelowDust = listOf(
+            TxOut(545.sat, Script.pay2pkh(randomKey().publicKey())),
+            TxOut(539.sat, Script.pay2sh(Hex.decode("0000000000000000000000000000000000000000"))),
+            TxOut(293.sat, Script.pay2wpkh(randomKey().publicKey())),
+            TxOut(329.sat, Script.pay2wsh(Hex.decode("0000000000000000000000000000000000000000"))),
+            TxOut(353.sat, Script.pay2tr(randomKey().publicKey().xOnly())),
+        )
+        outputsBelowDust.forEach { assertTrue(it.amount < Transactions.dustLimit(it.publicKeyScript)) }
+
+        val outputsAboveDust = listOf(
             TxOut(546.sat, Script.pay2pkh(randomKey().publicKey())),
             TxOut(540.sat, Script.pay2sh(Hex.decode("0000000000000000000000000000000000000000"))),
             TxOut(294.sat, Script.pay2wpkh(randomKey().publicKey())),
@@ -65,18 +67,7 @@ class HelpersTestsCommon : LightningTestSuite() {
             TxOut(354.sat, Script.pay2tr(randomKey().publicKey().xOnly())),
             TxOut(0.sat, listOf(OP_RETURN, OP_PUSHDATA(Hex.decode("deadbeef")))),
         )
-
-        fun toClosingTx(txOut: List<TxOut>): Transactions.TransactionWithInputInfo.ClosingTx {
-            val input = Transactions.InputInfo(OutPoint(TxId(ByteVector32.Zeroes), 0), TxOut(1000.sat, listOf()), listOf())
-            return Transactions.TransactionWithInputInfo.ClosingTx(input, Transaction(2, listOf(), txOut, 0), null)
-        }
-
-        assertTrue(checkClosingDustAmounts(toClosingTx(allOutputsAboveDust)))
-        assertFalse(checkClosingDustAmounts(toClosingTx(p2pkhBelowDust)))
-        assertFalse(checkClosingDustAmounts(toClosingTx(p2shBelowDust)))
-        assertFalse(checkClosingDustAmounts(toClosingTx(p2wpkhBelowDust)))
-        assertFalse(checkClosingDustAmounts(toClosingTx(p2wshBelowDust)))
-        assertFalse(checkClosingDustAmounts(toClosingTx(p2trBelowDust)))
+        outputsAboveDust.forEach { assertTrue { it.amount >= Transactions.dustLimit(it.publicKeyScript) } }
     }
 
 }

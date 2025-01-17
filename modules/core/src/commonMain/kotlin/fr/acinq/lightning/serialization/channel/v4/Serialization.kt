@@ -512,10 +512,11 @@ object Serialization {
                 writeNumber(localFundingStatus.createdAt)
             }
             is LocalFundingStatus.ConfirmedFundingTx -> {
-                write(0x02)
+                write(0x03)
                 writeBtcObject(localFundingStatus.signedTx)
                 writeNumber(localFundingStatus.fee.toLong())
                 writeLightningMessage(localFundingStatus.localSigs)
+                writeNumber(localFundingStatus.shortChannelId.toLong())
             }
         }
         when (remoteFundingStatus) {

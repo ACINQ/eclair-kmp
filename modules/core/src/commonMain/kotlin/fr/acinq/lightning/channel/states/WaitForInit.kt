@@ -1,5 +1,6 @@
 package fr.acinq.lightning.channel.states
 
+import fr.acinq.lightning.ShortChannelId
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_DEPTHOK
 import fr.acinq.lightning.blockchain.BITCOIN_FUNDING_SPENT
 import fr.acinq.lightning.blockchain.WatchConfirmed
@@ -8,7 +9,6 @@ import fr.acinq.lightning.channel.ChannelAction
 import fr.acinq.lightning.channel.ChannelCommand
 import fr.acinq.lightning.channel.Helpers
 import fr.acinq.lightning.channel.LocalFundingStatus
-import fr.acinq.lightning.utils.msat
 import fr.acinq.lightning.wire.ChannelTlv
 import fr.acinq.lightning.wire.OpenDualFundedChannel
 import fr.acinq.lightning.wire.TlvStream
@@ -68,7 +68,11 @@ data object WaitForInit : ChannelState() {
                     is ChannelStateWithCommitments -> cmd.state.commitments.active.mapNotNull { commitment ->
                         when (val fundingStatus = commitment.localFundingStatus) {
                             is LocalFundingStatus.UnconfirmedFundingTx -> fundingStatus.signedTx
-                            is LocalFundingStatus.ConfirmedFundingTx -> null
+                            is LocalFundingStatus.ConfirmedFundingTx -> when (fundingStatus.shortChannelId) {
+                                // If the short_channel_id isn't correctly set, we fetch the funding transaction to update it.
+                                ShortChannelId(0) -> fundingStatus.signedTx
+                                else -> null
+                            }
                         }
                     }
                     else -> listOf()

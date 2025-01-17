@@ -575,6 +575,7 @@ data class TxInitRbf(
     constructor(channelId: ByteVector32, lockTime: Long, feerate: FeeratePerKw, fundingContribution: Satoshi) : this(channelId, lockTime, feerate, TlvStream(TxInitRbfTlv.SharedOutputContributionTlv(fundingContribution)))
 
     val fundingContribution = tlvs.get<TxInitRbfTlv.SharedOutputContributionTlv>()?.amount ?: 0.sat
+    val requireConfirmedInputs: Boolean = tlvs.get<TxInitRbfTlv.RequireConfirmedInputsTlv>()?.let { true } ?: false
 
     override val type: Long get() = TxInitRbf.type
 
@@ -589,7 +590,10 @@ data class TxInitRbf(
         const val type: Long = 72
 
         @Suppress("UNCHECKED_CAST")
-        val readers = mapOf(TxInitRbfTlv.SharedOutputContributionTlv.tag to TxInitRbfTlv.SharedOutputContributionTlv.Companion as TlvValueReader<TxInitRbfTlv>)
+        val readers = mapOf(
+            TxInitRbfTlv.SharedOutputContributionTlv.tag to TxInitRbfTlv.SharedOutputContributionTlv.Companion as TlvValueReader<TxInitRbfTlv>,
+            TxInitRbfTlv.RequireConfirmedInputsTlv.tag to TxInitRbfTlv.RequireConfirmedInputsTlv as TlvValueReader<TxInitRbfTlv>,
+        )
 
         override fun read(input: Input): TxInitRbf = TxInitRbf(
             LightningCodecs.bytes(input, 32).byteVector32(),
@@ -607,6 +611,7 @@ data class TxAckRbf(
     constructor(channelId: ByteVector32, fundingContribution: Satoshi) : this(channelId, TlvStream(TxAckRbfTlv.SharedOutputContributionTlv(fundingContribution)))
 
     val fundingContribution = tlvs.get<TxAckRbfTlv.SharedOutputContributionTlv>()?.amount ?: 0.sat
+    val requireConfirmedInputs: Boolean = tlvs.get<TxAckRbfTlv.RequireConfirmedInputsTlv>()?.let { true } ?: false
 
     override val type: Long get() = TxAckRbf.type
 
@@ -619,7 +624,10 @@ data class TxAckRbf(
         const val type: Long = 73
 
         @Suppress("UNCHECKED_CAST")
-        val readers = mapOf(TxAckRbfTlv.SharedOutputContributionTlv.tag to TxAckRbfTlv.SharedOutputContributionTlv.Companion as TlvValueReader<TxAckRbfTlv>)
+        val readers = mapOf(
+            TxAckRbfTlv.SharedOutputContributionTlv.tag to TxAckRbfTlv.SharedOutputContributionTlv.Companion as TlvValueReader<TxAckRbfTlv>,
+            TxAckRbfTlv.RequireConfirmedInputsTlv.tag to TxAckRbfTlv.RequireConfirmedInputsTlv as TlvValueReader<TxAckRbfTlv>,
+        )
 
         override fun read(input: Input): TxAckRbf = TxAckRbf(
             LightningCodecs.bytes(input, 32).byteVector32(),

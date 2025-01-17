@@ -210,6 +210,13 @@ sealed class TxInitRbfTlv : Tlv {
             override fun read(input: Input): SharedOutputContributionTlv = SharedOutputContributionTlv(LightningCodecs.int64(input).sat)
         }
     }
+
+    /** Require confirmed inputs for the transaction being built. */
+    object RequireConfirmedInputsTlv : TxInitRbfTlv(), TlvValueReader<RequireConfirmedInputsTlv> {
+        override val tag: Long get() = 2
+        override fun write(out: Output) = Unit
+        override fun read(input: Input): RequireConfirmedInputsTlv = this
+    }
 }
 
 sealed class TxAckRbfTlv : Tlv {
@@ -227,6 +234,13 @@ sealed class TxAckRbfTlv : Tlv {
 
             override fun read(input: Input): SharedOutputContributionTlv = SharedOutputContributionTlv(LightningCodecs.int64(input).sat)
         }
+    }
+
+    /** Require confirmed inputs for the transaction being built. */
+    object RequireConfirmedInputsTlv : TxAckRbfTlv(), TlvValueReader<RequireConfirmedInputsTlv> {
+        override val tag: Long get() = 2
+        override fun write(out: Output) = Unit
+        override fun read(input: Input): RequireConfirmedInputsTlv = this
     }
 }
 

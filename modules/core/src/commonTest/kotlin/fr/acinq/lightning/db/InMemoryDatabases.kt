@@ -6,9 +6,10 @@ package fr.acinq.lightning.db
  */
 data class InMemoryDatabases(
     override val channels: InMemoryChannelsDb,
-    override val payments: InMemoryPaymentsDb
+    override val payments: InMemoryPaymentsDb,
+    override val offers: InMemoryOffersDb
 ) : Databases {
     companion object {
-        operator fun invoke() = InMemoryDatabases(InMemoryChannelsDb(), InMemoryPaymentsDb())
+        operator fun invoke() = InMemoryDatabases(InMemoryChannelsDb(), InMemoryPaymentsDb(), InMemoryOffersDb())
     }
 }

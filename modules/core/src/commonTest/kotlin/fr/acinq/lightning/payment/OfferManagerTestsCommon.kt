@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.*
+import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.crypto.sphinx.DecryptedPacket

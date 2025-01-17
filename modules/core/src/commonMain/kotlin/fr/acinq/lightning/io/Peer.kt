@@ -348,6 +348,10 @@ class Peer(
                 previousState = it
             }
         }
+
+        launch {
+            reloadOffersFromPersistance()
+        }
     }
 
     data class ConnectionJob(val job: Job, val socket: TcpSocket) {
@@ -739,6 +743,27 @@ class Peer(
             )
         )
         return incomingPaymentHandler.createInvoice(paymentPreimage, amount, description, extraHops, expiry ?: nodeParams.bolt11InvoiceExpiry)
+    }
+
+    /** Creates a custom offer and register it with the `offerManager`.
+     *  @param secret A random private key for creating the blinded path of the offer. Must be unique to this offer.
+     *  The offer returned is deterministic, if you need to persist you just need to save the parameters used to create it.
+     */
+    suspend fun createOffer(secret: PrivateKey, amount: MilliSatoshi?, description: String?): OfferTypes.Offer {
+        val (offer, _) = OfferTypes.Offer.createBlindedOffer(amount, description, nodeParams, remoteNodeId, Features.empty, secret)
+        offerManager.registerOffer(offer, secret.value)
+        db.offers.addOffer(offer, secret)
+        return offer
+    }
+
+    /**
+     * Reload the offers from the database to allow to reuse custom offers across restarts.
+     */
+    suspend fun reloadOffersFromPersistance() {
+        val offers = db.offers.listOffers()
+        offers.forEach { (pathId, offer) ->
+            offerManager.registerOffer(offer, pathId.value)
+        }
     }
 
     // The (node_id, fcm_token) tuple only needs to be registered once.

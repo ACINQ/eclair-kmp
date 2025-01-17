@@ -34,8 +34,8 @@ cd lightning-kmp
 To build the project library and install it locally, you can run:
 
 ```sh
-./gradlew :build
-./gradlew :publishToMavenLocal
+./gradlew build
+./gradlew publishToMavenLocal
 ```
 
 To run all tests on all platforms:

@@ -1,6 +1,7 @@
 package fr.acinq.lightning.serialization
 
 import fr.acinq.bitcoin.*
+import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
 import fr.acinq.bitcoin.io.Output
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.utils.UUID
@@ -24,6 +25,8 @@ object OutputExtensions {
     fun Output.writePrivateKey(o: PrivateKey) = write(o.value.toByteArray())
 
     fun Output.writeTxId(o: TxId) = write(o.value.toByteArray())
+
+    fun Output.writePublicNonce(o: IndividualNonce) = write(o.toByteArray())
 
     fun Output.writeUuid(o: UUID) = o.run {
         // NB: copied from kotlin source code (https://github.com/JetBrains/kotlin/blob/v2.1.0/libraries/stdlib/src/kotlin/uuid/Uuid.kt) in order to be forward compatible

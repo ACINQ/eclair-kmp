@@ -155,6 +155,7 @@
                     "publishableTxs": {
                         "commitTx": {
                             "input": {
+                                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                 "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                                 "txOut": {
                                     "amount": 1000000,
@@ -169,6 +170,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "735ca47f5592a678bb13ba5ef0c27b9acf0181dbeef2073f5668022077e05d38:3",
                                         "txOut": {
                                             "amount": 95000,
@@ -186,6 +188,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcSuccessTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "735ca47f5592a678bb13ba5ef0c27b9acf0181dbeef2073f5668022077e05d38:4",
                                         "txOut": {
                                             "amount": 110000,
@@ -256,6 +259,7 @@
         "claimMainOutputTx": {
             "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClaimRemoteCommitMainOutputTx.ClaimRemoteDelayedOutputTx",
             "input": {
+                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                 "outPoint": "d4756e4280b3178aa6e35eb9937681a6dded4098af1f93d055c9a693686f922c:5",
                 "txOut": {
                     "amount": 697000,
@@ -269,6 +273,7 @@
             "d4756e4280b3178aa6e35eb9937681a6dded4098af1f93d055c9a693686f922c:3": {
                 "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClaimHtlcTx.ClaimHtlcTimeoutTx",
                 "input": {
+                    "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                     "outPoint": "d4756e4280b3178aa6e35eb9937681a6dded4098af1f93d055c9a693686f922c:3",
                     "txOut": {
                         "amount": 95000,
@@ -282,6 +287,7 @@
             "d4756e4280b3178aa6e35eb9937681a6dded4098af1f93d055c9a693686f922c:4": {
                 "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClaimHtlcTx.ClaimHtlcSuccessTx",
                 "input": {
+                    "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                     "outPoint": "d4756e4280b3178aa6e35eb9937681a6dded4098af1f93d055c9a693686f922c:4",
                     "txOut": {
                         "amount": 110000,

@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Satoshi
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.ChannelEvents
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.blockchain.electrum.WalletState
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.channel.Helpers.Funding.computeChannelId
@@ -42,7 +43,8 @@ data class WaitForOpenChannel(
                             val minimumDepth = if (staticParams.useZeroConf) 0 else Helpers.minDepthForFunding(staticParams.nodeParams, open.fundingAmount)
                             val channelKeys = keyManager.channelKeys(localParams.fundingKeyPath)
                             val localFundingPubkey = channelKeys.fundingPubKey(0)
-                            val fundingScript = Helpers.Funding.makeFundingPubKeyScript(localFundingPubkey, open.fundingPubkey)
+                            val isTaprootChannel = channelFeatures.hasFeature(Feature.SimpleTaprootStaging)
+                            val fundingScript = Helpers.Funding.makeFundingPubKeyScript(localFundingPubkey, open.fundingPubkey, isTaprootChannel)
                             val requestFunding = open.requestFunding
                             val willFund = when {
                                 fundingRates == null -> null
@@ -70,6 +72,14 @@ data class WaitForOpenChannel(
                                     buildSet {
                                         add(ChannelTlv.ChannelTypeTlv(channelType))
                                         willFund?.let { add(ChannelTlv.ProvideFundingTlv(it.willFund)) }
+                                        if (isTaprootChannel) add(
+                                            ChannelTlv.NextLocalNoncesTlv(
+                                                listOf(
+                                                    channelKeys.verificationNonce(0, 0).second,
+                                                    channelKeys.verificationNonce(0, 1).second,
+                                                )
+                                            )
+                                        )
                                     }
                                 ),
                             )
@@ -90,14 +100,24 @@ data class WaitForOpenChannel(
                             val remoteFundingPubkey = open.fundingPubkey
                             val dustLimit = open.dustLimit.max(localParams.dustLimit)
                             val fundingParams = InteractiveTxParams(channelId, false, fundingAmount, open.fundingAmount, remoteFundingPubkey, open.lockTime, dustLimit, open.fundingFeerate)
-                            when (val fundingContributions = FundingContributions.create(channelKeys, keyManager.swapInOnChainWallet, fundingParams, walletInputs, null)) {
+                            when (val fundingContributions = FundingContributions.create(channelKeys, keyManager.swapInOnChainWallet, fundingParams, walletInputs, null, isTaprootChannel)) {
                                 is Either.Left -> {
                                     logger.error { "could not fund channel: ${fundingContributions.value}" }
                                     replyTo.complete(ChannelFundingResponse.Failure.FundingFailure(fundingContributions.value))
                                     Pair(Aborted, listOf(ChannelAction.Message.Send(Error(temporaryChannelId, ChannelFundingError(temporaryChannelId).message))))
                                 }
                                 is Either.Right -> {
-                                    val interactiveTxSession = InteractiveTxSession(staticParams.remoteNodeId, channelKeys, keyManager.swapInOnChainWallet, fundingParams, 0.msat, 0.msat, emptySet(), fundingContributions.value)
+                                    val interactiveTxSession = InteractiveTxSession(
+                                        staticParams.remoteNodeId,
+                                        channelKeys,
+                                        keyManager.swapInOnChainWallet,
+                                        fundingParams,
+                                        0.msat,
+                                        0.msat,
+                                        emptySet(),
+                                        fundingContributions.value,
+                                        firstRemoteNonce = open.firstRemoteNonce
+                                    )
                                     val nextState = WaitForFundingCreated(
                                         replyTo,
                                         // If our peer asks us to pay the commit tx fees, we accept (only used in tests, as we're otherwise always the channel opener).
@@ -112,6 +132,7 @@ data class WaitForOpenChannel(
                                         channelFeatures,
                                         willFund?.purchase,
                                         channelOrigin = null,
+                                        open.secondRemoteNonce
                                     )
                                     val actions = listOf(
                                         ChannelAction.ChannelId.IdAssigned(staticParams.remoteNodeId, temporaryChannelId, channelId),

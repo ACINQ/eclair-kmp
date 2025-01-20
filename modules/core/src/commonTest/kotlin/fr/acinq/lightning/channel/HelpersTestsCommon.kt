@@ -66,7 +66,7 @@ class HelpersTestsCommon : LightningTestSuite() {
         )
 
         fun toClosingTx(txOut: List<TxOut>): Transactions.TransactionWithInputInfo.ClosingTx {
-            val input = Transactions.InputInfo(OutPoint(TxId(ByteVector32.Zeroes), 0), TxOut(1000.sat, listOf()), listOf())
+            val input = Transactions.InputInfo.SegwitInput(OutPoint(TxId(ByteVector32.Zeroes), 0), TxOut(1000.sat, listOf()), Script.pay2wpkh(randomKey().publicKey()))
             return Transactions.TransactionWithInputInfo.ClosingTx(input, Transaction(2, listOf(), txOut, 0), null)
         }
 

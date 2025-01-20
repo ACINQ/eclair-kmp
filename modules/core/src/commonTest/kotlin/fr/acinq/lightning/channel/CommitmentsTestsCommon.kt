@@ -497,7 +497,7 @@ class CommitmentsTestsCommon : LightningTestSuite(), LoggingContext {
             val fundingAmount = (toLocal + toRemote).truncateToSatoshi()
             val dummyFundingScript = Scripts.multiSig2of2(randomKey().publicKey(), randomKey().publicKey())
             val dummyFundingTx = Transaction(2, listOf(TxIn(OutPoint(TxId(randomBytes32()), 1), 0)), listOf(TxOut(fundingAmount, Script.pay2wsh(dummyFundingScript))), 0)
-            val commitmentInput = Transactions.InputInfo(OutPoint(dummyFundingTx, 0), dummyFundingTx.txOut[0], dummyFundingScript)
+            val commitmentInput = Transactions.InputInfo.SegwitInput(OutPoint(dummyFundingTx, 0), dummyFundingTx.txOut[0], dummyFundingScript)
             val localCommitTx = Transactions.TransactionWithInputInfo.CommitTx(commitmentInput, Transaction(2, listOf(), listOf(), 0))
             return Commitments(
                 ChannelParams(

@@ -2,8 +2,10 @@ package fr.acinq.lightning.transactions
 
 import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.ScriptEltMapping.code2elt
+import fr.acinq.bitcoin.crypto.musig2.Musig2
 import fr.acinq.lightning.CltvExpiry
 import fr.acinq.lightning.CltvExpiryDelta
+import fr.acinq.lightning.transactions.Transactions.NUMS_POINT
 import fr.acinq.lightning.utils.sat
 
 /**
@@ -29,6 +31,12 @@ object Scripts {
         } else {
             ScriptWitness(listOf(ByteVector.empty, der(sig2, SigHash.SIGHASH_ALL), der(sig1, SigHash.SIGHASH_ALL), ByteVector(Script.write(multiSig2of2(pubkey1, pubkey2)))))
         }
+
+    fun sort(pubkeys: List<PublicKey>): List<PublicKey> = pubkeys.sortedWith { a, b -> LexicographicalOrdering.compare(a, b) }
+
+    fun musig2Aggregate(pubkey1: PublicKey, pubkey2: PublicKey): XonlyPublicKey = Musig2.aggregateKeys(sort(listOf(pubkey1, pubkey2)))
+
+    fun musig2FundingScript(pubkey1: PublicKey, pubkey2: PublicKey): List<ScriptElt> = Script.pay2tr(musig2Aggregate(pubkey1, pubkey2), null as ByteVector32?)
 
     /**
      * minimal encoding of a number into a script element:
@@ -241,4 +249,112 @@ object Scripts {
     fun witnessHtlcWithRevocationSig(revocationSig: ByteVector64, revocationPubkey: PublicKey, htlcScript: ByteVector) =
         ScriptWitness(listOf(der(revocationSig, SigHash.SIGHASH_ALL), revocationPubkey.value, htlcScript))
 
+    /**
+     * Specific scripts for taproot channels
+     */
+    object Taproot {
+        val anchorScript: List<ScriptElt> = listOf(OP_16, OP_CHECKSEQUENCEVERIFY)
+
+        val anchorScriptTree = ScriptTree.Leaf(anchorScript)
+
+        fun toRevokeScript(revocationPubkey: PublicKey, localDelayedPaymentPubkey: PublicKey) =
+            listOf(OP_PUSHDATA(localDelayedPaymentPubkey.xOnly()), OP_DROP, OP_PUSHDATA(revocationPubkey.xOnly()), OP_CHECKSIG)
+
+        fun toDelayScript(localDelayedPaymentPubkey: PublicKey, toLocalDelay: CltvExpiryDelta) =
+            listOf(OP_PUSHDATA(localDelayedPaymentPubkey.xOnly()), OP_CHECKSIG, encodeNumber(toLocalDelay.toLong()), OP_CHECKSEQUENCEVERIFY, OP_DROP)
+
+        /**
+         * Taproot channels to-local key, used for the delayed to-local output
+         *
+         * @param revocationPubkey          revocation key
+         * @param toSelfDelay               self CsV delay
+         * @param localDelayedPaymentPubkey local delayed payment key
+         * @return an (XonlyPubkey, Parity) pair
+         */
+        fun toLocalKey(revocationPubkey: PublicKey, toSelfDelay: CltvExpiryDelta, localDelayedPaymentPubkey: PublicKey): Pair<XonlyPublicKey, Boolean> {
+            val revokeScript = toRevokeScript(revocationPubkey, localDelayedPaymentPubkey)
+            val delayScript = toDelayScript(localDelayedPaymentPubkey, toSelfDelay)
+            val scriptTree = ScriptTree.Branch(
+                ScriptTree.Leaf(delayScript),
+                ScriptTree.Leaf(revokeScript),
+            )
+            return XonlyPublicKey(NUMS_POINT).outputKey(Crypto.TaprootTweak.ScriptTweak(scriptTree))
+        }
+
+        /**
+         *
+         * @param revocationPubkey          revocation key
+         * @param toSelfDelay               to-self CSV delay
+         * @param localDelayedPaymentPubkey local delayed payment key
+         * @return a script tree with two leaves (to self with delay, and to revocation key)
+         */
+        fun toLocalScriptTree(revocationPubkey: PublicKey, toSelfDelay: CltvExpiryDelta, localDelayedPaymentPubkey: PublicKey): ScriptTree.Branch {
+            return ScriptTree.Branch(
+                ScriptTree.Leaf(toDelayScript(localDelayedPaymentPubkey, toSelfDelay)),
+                ScriptTree.Leaf(toRevokeScript(revocationPubkey, localDelayedPaymentPubkey)),
+            )
+        }
+
+        fun toRemoteScript(remotePaymentPubkey: PublicKey) = listOf(OP_PUSHDATA(remotePaymentPubkey.xOnly()), OP_CHECKSIG, OP_1, OP_CHECKSEQUENCEVERIFY, OP_DROP)
+
+        /**
+         * taproot channel to-remote key, used for the to-remote output
+         *
+         * @param remotePaymentPubkey remote key
+         * @return a (XonlyPubkey, Parity) pair
+         */
+        fun toRemoteKey(remotePaymentPubkey: PublicKey): Pair<XonlyPublicKey, Boolean> {
+            val remoteScript = toRemoteScript(remotePaymentPubkey)
+            val scriptTree = ScriptTree.Leaf(remoteScript)
+            return XonlyPublicKey(NUMS_POINT).outputKey(scriptTree)
+        }
+
+        /**
+         *
+         * @param remotePaymentPubkey remote key
+         * @return a script tree with a single leaf (to remote key, with a 1-block CSV delay)
+         */
+        fun toRemoteScriptTree(remotePaymentPubkey: PublicKey) = ScriptTree.Leaf(toRemoteScript(remotePaymentPubkey))
+
+        fun offeredHtlcTimeoutScript(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey) = listOf(OP_PUSHDATA(localHtlcPubkey.xOnly()), OP_CHECKSIGVERIFY, OP_PUSHDATA(remoteHtlcPubkey.xOnly()), OP_CHECKSIG)
+
+        fun offeredHtlcSuccessScript(remoteHtlcPubkey: PublicKey, paymentHash: ByteVector32) = listOf(
+            // @formatter:off
+            OP_SIZE, encodeNumber(32), OP_EQUALVERIFY,
+            OP_HASH160, OP_PUSHDATA(Crypto.ripemd160(paymentHash)), OP_EQUALVERIFY,
+            OP_PUSHDATA(remoteHtlcPubkey.xOnly()), OP_CHECKSIG,
+            OP_1, OP_CHECKSEQUENCEVERIFY, OP_DROP
+            // @formatter:on
+        )
+
+        fun offeredHtlcTree(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, paymentHash: ByteVector32) =
+            ScriptTree.Branch(
+                ScriptTree.Leaf(offeredHtlcTimeoutScript(localHtlcPubkey, remoteHtlcPubkey)),
+                ScriptTree.Leaf(offeredHtlcSuccessScript(remoteHtlcPubkey, paymentHash))
+            )
+
+        fun receivedHtlcTimeoutScript(remoteHtlcPubkey: PublicKey, lockTime: CltvExpiry) = listOf(
+            // @formatter:off
+            OP_PUSHDATA(remoteHtlcPubkey.xOnly()), OP_CHECKSIG,
+            OP_1, OP_CHECKSEQUENCEVERIFY, OP_DROP,
+            encodeNumber(lockTime.toLong()), OP_CHECKLOCKTIMEVERIFY, OP_DROP
+            // @formatter:on
+        )
+
+        fun receivedHtlcSuccessScript(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, paymentHash: ByteVector32) = listOf(
+            // @formatter:off
+            OP_SIZE, encodeNumber(32), OP_EQUALVERIFY,
+            OP_HASH160, OP_PUSHDATA(Crypto.ripemd160(paymentHash)), OP_EQUALVERIFY,
+            OP_PUSHDATA(localHtlcPubkey.xOnly()), OP_CHECKSIGVERIFY,
+            OP_PUSHDATA(remoteHtlcPubkey.xOnly()), OP_CHECKSIG
+            // @formatter:on
+        )
+
+        fun receivedHtlcTree(localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, paymentHash: ByteVector32, lockTime: CltvExpiry): ScriptTree.Branch {
+            return ScriptTree.Branch(
+                ScriptTree.Leaf(receivedHtlcTimeoutScript(remoteHtlcPubkey, lockTime)),
+                ScriptTree.Leaf(receivedHtlcSuccessScript(localHtlcPubkey, remoteHtlcPubkey, paymentHash)),
+            )
+        }
+    }
 }

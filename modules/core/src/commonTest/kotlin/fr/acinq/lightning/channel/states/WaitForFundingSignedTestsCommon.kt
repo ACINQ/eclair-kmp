@@ -44,6 +44,31 @@ class WaitForFundingSignedTestsCommon : LightningTestSuite() {
     }
 
     @Test
+    fun `recv CommitSig -- simple taproot channels`() {
+        val (alice, commitSigAlice, bob, commitSigBob) = init(channelType = ChannelType.SupportedChannelType.SimpleTaprootStaging)
+        val commitInput = alice.state.signingSession.commitInput
+        run {
+            val (_, _) = alice.process(ChannelCommand.MessageReceived(commitSigBob))
+                .also { (state, actions) ->
+                    assertIs<WaitForFundingSigned>(state.state)
+                    assertTrue(actions.isEmpty())
+                }
+        }
+        run {
+            val (_, _) = bob.process(ChannelCommand.MessageReceived(commitSigAlice))
+                .also { (state, actions) ->
+                    assertIs<WaitForFundingConfirmed>(state.state)
+                    assertEquals(actions.size, 5)
+                    actions.hasOutgoingMessage<TxSignatures>().also { assertFalse(it.channelData.isEmpty()) }
+                    actions.findWatch<WatchConfirmed>().also { assertEquals(WatchConfirmed(state.channelId, commitInput.outPoint.txid, commitInput.txOut.publicKeyScript, 3, BITCOIN_FUNDING_DEPTHOK), it) }
+                    actions.find<ChannelAction.Storage.StoreIncomingPayment.ViaNewChannel>().also { assertEquals(TestConstants.bobFundingAmount.toMilliSatoshi(), it.amountReceived) }
+                    actions.has<ChannelAction.Storage.StoreState>()
+                    actions.find<ChannelAction.EmitEvent>().also { assertEquals(ChannelEvents.Created(state.state), it.event) }
+                }
+        }
+    }
+
+    @Test
     fun `recv CommitSig -- zero conf`() {
         val (alice, commitSigAlice, bob, commitSigBob) = init(ChannelType.SupportedChannelType.AnchorOutputsZeroReserve, zeroConf = true)
         run {

@@ -1,9 +1,6 @@
 package fr.acinq.lightning.serialization.channel.v4
 
-import fr.acinq.bitcoin.BtcSerializer
-import fr.acinq.bitcoin.OutPoint
-import fr.acinq.bitcoin.ScriptWitness
-import fr.acinq.bitcoin.Transaction
+import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.io.ByteArrayOutput
 import fr.acinq.bitcoin.io.Output
 import fr.acinq.lightning.FeatureSupport
@@ -21,13 +18,13 @@ import fr.acinq.lightning.serialization.OutputExtensions.writeLightningMessage
 import fr.acinq.lightning.serialization.OutputExtensions.writeNullable
 import fr.acinq.lightning.serialization.OutputExtensions.writeNumber
 import fr.acinq.lightning.serialization.OutputExtensions.writePublicKey
+import fr.acinq.lightning.serialization.OutputExtensions.writePublicNonce
 import fr.acinq.lightning.serialization.OutputExtensions.writeString
 import fr.acinq.lightning.serialization.OutputExtensions.writeTxId
 import fr.acinq.lightning.serialization.common.liquidityads.Serialization.writeLiquidityPurchase
 import fr.acinq.lightning.transactions.*
 import fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.*
 import fr.acinq.lightning.wire.LightningCodecs
-import fr.acinq.lightning.wire.LiquidityAds
 
 /**
  * Serialization for [ChannelStateWithCommitments].
@@ -245,6 +242,12 @@ object Serialization {
     private fun Output.writeSharedFundingInput(i: SharedFundingInput) = when (i) {
         is SharedFundingInput.Multisig2of2 -> {
             write(0x01)
+            writeInputInfo(i.info)
+            writeNumber(i.fundingTxIndex)
+            writePublicKey(i.remoteFundingPubkey)
+        }
+        is SharedFundingInput.Musig2Input -> {
+            write(0x02)
             writeInputInfo(i.info)
             writeNumber(i.fundingTxIndex)
             writePublicKey(i.remoteFundingPubkey)
@@ -585,6 +588,9 @@ object Serialization {
             writeNullable(lastIndex) { writeNumber(it) }
         }
         writeDelimited(remoteChannelData.data.toByteArray())
+        if (o.isTaprootChannel) {
+            writeCollection(o.nextRemoteNonces) { writePublicNonce(it) }
+        }
     }
 
     private fun Output.writeDirectedHtlc(htlc: DirectedHtlc) = htlc.run {
@@ -616,10 +622,21 @@ object Serialization {
         writeNumber(toRemote.toLong())
     }
 
+    private fun Output.writeScriptTree(tree: ScriptTree): Unit = tree.run {
+        writeDelimited(this.write())
+    }
+    
     private fun Output.writeInputInfo(o: Transactions.InputInfo): Unit = o.run {
         writeBtcObject(outPoint)
         writeBtcObject(txOut)
-        writeDelimited(redeemScript.toByteArray())
+        when (o) {
+            is Transactions.InputInfo.SegwitInput -> writeDelimited(o.redeemScript.toByteArray())
+            is Transactions.InputInfo.TaprootInput -> {
+                writeDelimited(ByteArray(0))
+                writeByteVector32(o.internalKey.value)
+                writeNullable(o.scriptTree){ writeScriptTree(it) }
+            }
+        }
     }
 
     private fun Output.writeTransactionWithInputInfo(o: Transactions.TransactionWithInputInfo) {

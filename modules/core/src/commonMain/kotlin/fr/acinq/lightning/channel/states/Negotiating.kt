@@ -30,8 +30,29 @@ data class Negotiating(
 
     override suspend fun ChannelContext.processInternal(cmd: ChannelCommand): Pair<ChannelState, List<ChannelAction>> {
         return when (cmd) {
-            is ChannelCommand.MessageReceived -> when (cmd.message) {
-                is ClosingSigned -> {
+            is ChannelCommand.MessageReceived -> when {
+                cmd.message is ClosingSigned && commitments.isTaprootChannel -> {
+                    val remoteClosingFee = cmd.message.feeSatoshis
+                    logger.info { "received closing fee=$remoteClosingFee" }
+                    when (val result = Helpers.Closing.checkClosingSignature(
+                        channelKeys(),
+                        commitments.latest,
+                        localShutdown.scriptPubKey.toByteArray(),
+                        remoteShutdown.scriptPubKey.toByteArray(),
+                        cmd.message.feeSatoshis,
+                        commitments.closingNonce!!,
+                        this@Negotiating.remoteShutdown.shutdownNonce!!,
+                        cmd.message.partialSignature!!
+                    )) {
+                        is Either.Left -> handleLocalError(cmd, result.value)
+                        is Either.Right -> {
+                            // with simple taproot channels there is no fee negotiation
+                            completeMutualClose(result.value.first, result.value.second)
+                        }
+                    }
+                }
+
+                cmd.message is ClosingSigned -> {
                     val remoteClosingFee = cmd.message.feeSatoshis
                     logger.info { "received closing fee=$remoteClosingFee" }
                     when (val result =
@@ -142,7 +163,8 @@ data class Negotiating(
                         }
                     }
                 }
-                is Error -> handleRemoteError(cmd.message)
+
+                cmd.message is Error -> handleRemoteError(cmd.message)
                 else -> unhandled(cmd)
             }
             is ChannelCommand.WatchReceived -> when (val watch = cmd.watch) {

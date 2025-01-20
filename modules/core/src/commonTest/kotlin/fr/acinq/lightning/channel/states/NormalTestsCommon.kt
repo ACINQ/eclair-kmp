@@ -227,7 +227,7 @@ class NormalTestsCommon : LightningTestSuite() {
             val (_, alice4) = crossSign(bob3, alice3)
             val aliceCommit = alice4.commitments.active.first().localCommit
             assertTrue(aliceCommit.publishableTxs.commitTx.tx.txOut.all { txOut -> txOut.amount > 0.sat })
-            val aliceBalance = aliceCommit.spec.toLocal - commitTxFeeMsat(alice4.commitments.params.localParams.dustLimit, aliceCommit.spec)
+            val aliceBalance = aliceCommit.spec.toLocal - commitTxFeeMsat(alice4.commitments.params.localParams.dustLimit, aliceCommit.spec, alice4.commitments.isTaprootChannel)
             assertTrue(aliceBalance >= 0.msat)
             assertTrue(aliceBalance < alice4.commitments.latest.localChannelReserve)
         }
@@ -400,6 +400,18 @@ class NormalTestsCommon : LightningTestSuite() {
     @Test
     fun `recv UpdateAddHtlc`() {
         val (_, bob0) = reachNormal()
+        val add = UpdateAddHtlc(bob0.channelId, 0, 15_000.msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(bob0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket)
+        val (bob1, actions1) = bob0.process(ChannelCommand.MessageReceived(add))
+        assertTrue(actions1.isEmpty())
+        assertEquals(
+            bob0.copy(state = bob0.state.copy(commitments = bob0.commitments.copy(changes = bob0.commitments.changes.copy(remoteNextHtlcId = 1, remoteChanges = bob0.commitments.changes.remoteChanges.copy(proposed = listOf(add)))))),
+            bob1
+        )
+    }
+
+    @Test
+    fun `recv UpdateAddHtlc -- simple taproot channels`() {
+        val (_, bob0) = reachNormal(channelType = ChannelType.SupportedChannelType.SimpleTaprootStaging)
         val add = UpdateAddHtlc(bob0.channelId, 0, 15_000.msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(bob0.currentBlockHeight.toLong()), TestConstants.emptyOnionPacket)
         val (bob1, actions1) = bob0.process(ChannelCommand.MessageReceived(add))
         assertTrue(actions1.isEmpty())
@@ -783,6 +795,33 @@ class NormalTestsCommon : LightningTestSuite() {
     @Test
     fun `recv CommitSig -- multiple htlcs in both directions`() {
         val (alice0, bob0) = reachNormal()
+        val (nodes1, _, _) = addHtlc(50_000_000.msat, alice0, bob0) // a->b (regular)
+        val (alice1, bob1) = nodes1
+        val (nodes2, _, _) = addHtlc(8_000_000.msat, alice1, bob1) //  a->b (regular)
+        val (alice2, bob2) = nodes2
+        val (nodes3, _, _) = addHtlc(300_000.msat, bob2, alice2) //   b->a (dust)
+        val (bob3, alice3) = nodes3
+        val (nodes4, _, _) = addHtlc(1_000_000.msat, alice3, bob3) //  a->b (regular)
+        val (alice4, bob4) = nodes4
+        val (nodes5, _, _) = addHtlc(50_000_000.msat, bob4, alice4) // b->a (regular)
+        val (bob5, alice5) = nodes5
+        val (nodes6, _, _) = addHtlc(500_000.msat, alice5, bob5) //   a->b (dust)
+        val (alice6, bob6) = nodes6
+        val (nodes7, _, _) = addHtlc(4_000_000.msat, bob6, alice6) //  b->a (regular)
+        val (bob7, alice7) = nodes7
+
+        val (alice8, bob8) = signAndRevack(alice7, bob7)
+        val (_, actionsBob9) = bob8.process(ChannelCommand.Commitment.Sign)
+        val commitSig = actionsBob9.findOutgoingMessage<CommitSig>()
+        val (alice9, _) = alice8.process(ChannelCommand.MessageReceived(commitSig))
+        assertIs<LNChannel<Normal>>(alice9)
+        assertEquals(1, alice9.commitments.latest.localCommit.index)
+        assertEquals(3, alice9.commitments.latest.localCommit.publishableTxs.htlcTxsAndSigs.size)
+    }
+
+    @Test
+    fun `recv CommitSig -- multiple htlcs in both directions -- simple taproot channels`() {
+        val (alice0, bob0) = reachNormal(channelType = ChannelType.SupportedChannelType.SimpleTaprootStaging)
         val (nodes1, _, _) = addHtlc(50_000_000.msat, alice0, bob0) // a->b (regular)
         val (alice1, bob1) = nodes1
         val (nodes2, _, _) = addHtlc(8_000_000.msat, alice1, bob1) //  a->b (regular)

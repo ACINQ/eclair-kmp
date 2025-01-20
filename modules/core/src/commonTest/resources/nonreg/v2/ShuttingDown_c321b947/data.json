@@ -149,6 +149,7 @@
                     "publishableTxs": {
                         "commitTx": {
                             "input": {
+                                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                 "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                                 "txOut": {
                                     "amount": 1000000,
@@ -163,6 +164,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "24237f2dafcc072f634bc4ffc74b34157a827567ed32e8adc85bf72b54b9a07a:2",
                                         "txOut": {
                                             "amount": 200000,
@@ -180,6 +182,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "24237f2dafcc072f634bc4ffc74b34157a827567ed32e8adc85bf72b54b9a07a:5",
                                         "txOut": {
                                             "amount": 300000,

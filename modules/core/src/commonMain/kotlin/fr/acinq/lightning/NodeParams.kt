@@ -211,6 +211,7 @@ data class NodeParams(
             Feature.ExperimentalSplice to FeatureSupport.Optional,
             Feature.OnTheFlyFunding to FeatureSupport.Optional,
             Feature.FundingFeeCredit to FeatureSupport.Optional,
+            Feature.SimpleTaprootStaging to FeatureSupport.Optional,
         ),
         dustLimit = 546.sat,
         maxRemoteDustLimit = 600.sat,

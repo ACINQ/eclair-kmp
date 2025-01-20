@@ -131,6 +131,7 @@
                     "publishableTxs": {
                         "commitTx": {
                             "input": {
+                                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                 "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                                 "txOut": {
                                     "amount": 1000000,
@@ -194,6 +195,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -222,6 +224,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -250,6 +253,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -278,6 +282,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -306,6 +311,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -334,6 +340,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -362,6 +369,7 @@
             {
                 "unsignedTx": {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                         "txOut": {
                             "amount": 1000000,
@@ -391,6 +399,7 @@
     ],
     "bestUnpublishedClosingTx": {
         "input": {
+            "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
             "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
             "txOut": {
                 "amount": 1000000,

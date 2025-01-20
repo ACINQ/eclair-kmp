@@ -1,6 +1,7 @@
 package fr.acinq.lightning.serialization
 
 import fr.acinq.bitcoin.*
+import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.utils.UUID
@@ -24,6 +25,8 @@ object InputExtensions {
     fun Input.readPrivateKey() = PrivateKey(ByteArray(32).also { read(it, 0, it.size) })
 
     fun Input.readTxId(): TxId = TxId(readByteVector32())
+
+    fun Input.readPublicNonce() = IndividualNonce(ByteArray(66).also { read(it, 0, it.size) })
 
     fun Input.readUuid(): UUID = UUID.fromBytes(ByteArray(16).also { read(it, 0, it.size) })
 

@@ -181,6 +181,7 @@
                     "publishableTxs": {
                         "commitTx": {
                             "input": {
+                                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                 "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                                 "txOut": {
                                     "amount": 1000000,
@@ -195,6 +196,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "2ba9027cf8e58bb8298b03b361336d6453ebc9c03135afc8741c0871b167d491:2",
                                         "txOut": {
                                             "amount": 4540,
@@ -212,6 +214,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcTimeoutTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "2ba9027cf8e58bb8298b03b361336d6453ebc9c03135afc8741c0871b167d491:3",
                                         "txOut": {
                                             "amount": 4550,
@@ -229,6 +232,7 @@
                                 "txinfo": {
                                     "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.HtlcTx.HtlcSuccessTx",
                                     "input": {
+                                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                         "outPoint": "2ba9027cf8e58bb8298b03b361336d6453ebc9c03135afc8741c0871b167d491:4",
                                         "txOut": {
                                             "amount": 4640,

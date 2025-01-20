@@ -59,6 +59,10 @@ sealed class ChannelType {
             override val features: Set<Feature> get() = setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.ZeroReserveChannels)
         }
 
+        object SimpleTaprootStaging : SupportedChannelType() {
+            override val name: String get() = "simple_taproot_staging"
+            override val features: Set<Feature> get() = setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.ZeroReserveChannels, Feature.SimpleTaprootStaging)
+        }
     }
 
     data class UnsupportedChannelType(val featureBits: Features) : ChannelType() {
@@ -73,6 +77,7 @@ sealed class ChannelType {
             // @formatter:off
             Features(Feature.StaticRemoteKey to FeatureSupport.Mandatory, Feature.AnchorOutputs to FeatureSupport.Mandatory, Feature.ZeroReserveChannels to FeatureSupport.Mandatory) -> SupportedChannelType.AnchorOutputsZeroReserve
             Features(Feature.StaticRemoteKey to FeatureSupport.Mandatory, Feature.AnchorOutputs to FeatureSupport.Mandatory) -> SupportedChannelType.AnchorOutputs
+            Features(Feature.StaticRemoteKey to FeatureSupport.Mandatory, Feature.AnchorOutputs to FeatureSupport.Mandatory, Feature.ZeroReserveChannels to FeatureSupport.Mandatory, Feature.SimpleTaprootStaging to FeatureSupport.Mandatory) -> SupportedChannelType.SimpleTaprootStaging
             else -> UnsupportedChannelType(features)
             // @formatter:on
         }

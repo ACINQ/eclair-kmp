@@ -65,8 +65,7 @@ data class Offline(val state: PersistedChannelState) : ChannelState() {
                                     val nextState = when (state) {
                                         is WaitForFundingConfirmed -> {
                                             logger.info { "was confirmed while offline at blockHeight=${watch.blockHeight} txIndex=${watch.txIndex} with funding txid=${watch.tx.txid}" }
-                                            val nextPerCommitmentPoint = commitments1.params.localParams.channelKeys(keyManager).commitmentPoint(1)
-                                            val channelReady = ChannelReady(channelId, nextPerCommitmentPoint, TlvStream(ChannelReadyTlv.ShortChannelIdTlv(ShortChannelId.peerId(staticParams.nodeParams.nodeId))))
+                                            val channelReady = state.run { createChannelReady() }
                                             val shortChannelId = ShortChannelId(watch.blockHeight, watch.txIndex, commitments1.latest.commitInput.outPoint.index.toInt())
                                             WaitForChannelReady(commitments1, shortChannelId, channelReady)
                                         }

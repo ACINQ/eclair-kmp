@@ -2,6 +2,7 @@ package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.*
 import fr.acinq.lightning.Feature
+import fr.acinq.lightning.FeatureSupport
 import fr.acinq.lightning.Features
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
@@ -66,6 +67,40 @@ class WaitForFundingCreatedTestsCommon : LightningTestSuite() {
         assertEquals(bob3.state.channelParams.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.DualFunding)))
         assertIs<ChannelFundingResponse.Success>(alice.state.replyTo.await()).also { assertEquals(0, it.fundingTxIndex) }
         assertIs<ChannelFundingResponse.Success>(bob.state.replyTo.await()).also { assertEquals(0, it.fundingTxIndex) }
+        verifyCommits(alice2.state.signingSession, bob3.state.signingSession, TestConstants.aliceFundingAmount.toMilliSatoshi(), 0.msat)
+    }
+
+    @Test
+    fun `complete interactive-tx protocol -- simple taproot channels`() {
+        val (alice, bob, inputAlice) = init(
+            ChannelType.SupportedChannelType.SimpleTaprootStaging,
+            aliceFeatures = TestConstants.Alice.nodeParams.features.initFeatures().add(Feature.SimpleTaprootStaging to FeatureSupport.Mandatory),
+            bobFeatures = TestConstants.Bob.nodeParams.features.initFeatures().add(Feature.SimpleTaprootStaging to FeatureSupport.Mandatory),
+            bobFundingAmount = 0.sat
+        )
+        // Alice ---- tx_add_input ----> Bob
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(inputAlice))
+        // Alice <--- tx_complete ----- Bob
+        val (alice1, actionsAlice1) = alice.process(ChannelCommand.MessageReceived(actionsBob1.findOutgoingMessage<TxComplete>()))
+        // Alice ---- tx_add_output ----> Bob
+        val (bob2, actionsBob2) = bob1.process(ChannelCommand.MessageReceived(actionsAlice1.findOutgoingMessage<TxAddOutput>()))
+        // Alice <--- tx_complete ----- Bob
+        val (alice2, actionsAlice2) = alice1.process(ChannelCommand.MessageReceived(actionsBob2.findOutgoingMessage<TxComplete>()))
+        // Alice ---- tx_complete ----> Bob
+        val (bob3, actionsBob3) = bob2.process(ChannelCommand.MessageReceived(actionsAlice2.findOutgoingMessage<TxComplete>()))
+        val commitSigAlice = actionsAlice2.findOutgoingMessage<CommitSig>()
+        val commitSigBob = actionsBob3.findOutgoingMessage<CommitSig>()
+        assertEquals(commitSigAlice.channelId, commitSigBob.channelId)
+        assertTrue(commitSigAlice.htlcSignatures.isEmpty())
+        assertTrue(commitSigAlice.channelData.isEmpty())
+        assertTrue(commitSigBob.htlcSignatures.isEmpty())
+        assertFalse(commitSigBob.channelData.isEmpty())
+        actionsAlice2.has<ChannelAction.Storage.StoreState>()
+        actionsBob3.has<ChannelAction.Storage.StoreState>()
+        assertIs<WaitForFundingSigned>(alice2.state)
+        assertIs<WaitForFundingSigned>(bob3.state)
+        assertEquals(alice2.state.channelParams.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.ZeroReserveChannels, Feature.DualFunding, Feature.SimpleTaprootStaging)))
+        assertEquals(bob3.state.channelParams.channelFeatures, ChannelFeatures(setOf(Feature.StaticRemoteKey, Feature.AnchorOutputs, Feature.ZeroReserveChannels, Feature.DualFunding, Feature.SimpleTaprootStaging)))
         verifyCommits(alice2.state.signingSession, bob3.state.signingSession, TestConstants.aliceFundingAmount.toMilliSatoshi(), 0.msat)
     }
 

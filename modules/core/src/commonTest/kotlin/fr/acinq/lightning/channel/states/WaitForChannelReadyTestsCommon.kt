@@ -38,6 +38,19 @@ class WaitForChannelReadyTestsCommon : LightningTestSuite() {
     }
 
     @Test
+    fun `recv TxSignatures and restart -- zero conf -- simple taproot channels`() {
+        val (alice, _, bob, _) = init(ChannelType.SupportedChannelType.SimpleTaprootStaging, zeroConf = true)
+        val txSigsAlice = getFundingSigs(alice)
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(txSigsAlice))
+        val fundingTx = actionsBob1.find<ChannelAction.Blockchain.PublishTx>().tx
+        val (bob2, actionsBob2) = LNChannel(bob1.ctx, WaitForInit).process(ChannelCommand.Init.Restore(bob1.state as PersistedChannelState))
+        assertIs<Offline>(bob2.state)
+        assertEquals(actionsBob2.size, 2)
+        assertEquals(actionsBob2.find<ChannelAction.Blockchain.PublishTx>().tx, fundingTx)
+        assertEquals(actionsBob2.findWatch<WatchConfirmed>().txId, fundingTx.txid)
+    }
+
+    @Test
     fun `recv TxSignatures -- duplicate`() {
         val (alice, _, _, _) = init()
         val (alice1, actions1) = alice.process(ChannelCommand.MessageReceived(TxSignatures(alice.channelId, alice.commitments.latest.fundingTxId, listOf())))
@@ -58,6 +71,25 @@ class WaitForChannelReadyTestsCommon : LightningTestSuite() {
     @Test
     fun `recv ChannelReady`() {
         val (alice, channelReadyAlice, bob, channelReadyBob) = init()
+        val (alice1, actionsAlice1) = alice.process(ChannelCommand.MessageReceived(channelReadyBob))
+        assertIs<Normal>(alice1.state)
+        actionsAlice1.find<ChannelAction.Storage.SetLocked>().also {
+            assertEquals(alice.commitments.latest.fundingTxId, it.txId)
+        }
+        actionsAlice1.has<ChannelAction.Storage.StoreState>()
+        assertIs<ChannelEvents.Confirmed>(actionsAlice1.find<ChannelAction.EmitEvent>().event)
+        val (bob1, actionsBob1) = bob.process(ChannelCommand.MessageReceived(channelReadyAlice))
+        assertIs<Normal>(bob1.state)
+        actionsBob1.find<ChannelAction.Storage.SetLocked>().also {
+            assertEquals(bob.commitments.latest.fundingTxId, it.txId)
+        }
+        actionsBob1.has<ChannelAction.Storage.StoreState>()
+        assertIs<ChannelEvents.Confirmed>(actionsBob1.find<ChannelAction.EmitEvent>().event)
+    }
+
+    @Test
+    fun `recv ChannelReady -- simple taproot channels`() {
+        val (alice, channelReadyAlice, bob, channelReadyBob) = init(ChannelType.SupportedChannelType.SimpleTaprootStaging)
         val (alice1, actionsAlice1) = alice.process(ChannelCommand.MessageReceived(channelReadyBob))
         assertIs<Normal>(alice1.state)
         actionsAlice1.find<ChannelAction.Storage.SetLocked>().also {

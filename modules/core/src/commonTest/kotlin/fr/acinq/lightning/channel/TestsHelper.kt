@@ -1,6 +1,8 @@
 package fr.acinq.lightning.channel
 
 import fr.acinq.bitcoin.*
+import fr.acinq.bitcoin.utils.Either
+import fr.acinq.bitcoin.utils.flatMap
 import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.blockchain.*
@@ -121,14 +123,18 @@ data class LNChannel<out S : ChannelState>(
             is Normal -> when (state.spliceStatus) {
                 is SpliceStatus.WaitingForSigs -> state
                 else -> state.copy(spliceStatus = SpliceStatus.None)
-            }
+            }.updateCommitments(state.commitments.copy(closingNonce = null, pendingRemoteNextLocalNonce = null))
+
+            is WaitForFundingSigned -> state.copy(secondRemoteNonce = null)
+            is ChannelStateWithCommitments -> state.updateCommitments(state.commitments.copy(closingNonce = null, pendingRemoteNextLocalNonce = null))
             else -> state
         }
 
         val serialized = Serialization.serialize(state)
         val deserialized = Serialization.deserialize(serialized).value
+        val filtered = removeTemporaryStatuses(state)
 
-        assertEquals(removeTemporaryStatuses(state), deserialized, "serialization error")
+        assertEquals(filtered, deserialized, "serialization error")
     }
 
     private fun checkSerialization(actions: List<ChannelAction>) {
@@ -151,14 +157,26 @@ object TestsHelper {
         zeroConf: Boolean = false,
         channelOrigin: Origin? = null
     ): Triple<LNChannel<WaitForAcceptChannel>, LNChannel<WaitForOpenChannel>, OpenDualFundedChannel> {
+        val isTaprootChannel = when (channelType) {
+            is ChannelType.SupportedChannelType.SimpleTaprootStaging -> true
+            else -> false
+        }
+        val aliceFeatures1 = when (isTaprootChannel) {
+            true -> aliceFeatures.add(Feature.SimpleTaprootStaging to FeatureSupport.Mandatory)
+            false -> aliceFeatures
+        }
+        val bobFeatures1 = when (isTaprootChannel) {
+            true -> bobFeatures.add(Feature.SimpleTaprootStaging to FeatureSupport.Mandatory)
+            false -> bobFeatures
+        }
         val (aliceNodeParams, bobNodeParams) = when (zeroConf) {
             true -> Pair(
-                TestConstants.Alice.nodeParams.copy(features = aliceFeatures, zeroConfPeers = setOf(TestConstants.Bob.nodeParams.nodeId)),
-                TestConstants.Bob.nodeParams.copy(features = bobFeatures, zeroConfPeers = setOf(TestConstants.Alice.nodeParams.nodeId))
+                TestConstants.Alice.nodeParams.copy(features = aliceFeatures1, zeroConfPeers = setOf(TestConstants.Bob.nodeParams.nodeId)),
+                TestConstants.Bob.nodeParams.copy(features = bobFeatures1, zeroConfPeers = setOf(TestConstants.Alice.nodeParams.nodeId))
             )
             false -> Pair(
-                TestConstants.Alice.nodeParams.copy(features = aliceFeatures),
-                TestConstants.Bob.nodeParams.copy(features = bobFeatures)
+                TestConstants.Alice.nodeParams.copy(features = aliceFeatures1),
+                TestConstants.Bob.nodeParams.copy(features = bobFeatures1)
             )
         }
         val alice = LNChannel(
@@ -181,10 +199,10 @@ object TestsHelper {
         )
 
         val channelFlags = ChannelFlags(announceChannel = false, nonInitiatorPaysCommitFees = requestRemoteFunding != null)
-        val aliceChannelParams = TestConstants.Alice.channelParams(payCommitTxFees = !channelFlags.nonInitiatorPaysCommitFees).copy(features = aliceFeatures.initFeatures())
-        val bobChannelParams = TestConstants.Bob.channelParams(payCommitTxFees = channelFlags.nonInitiatorPaysCommitFees).copy(features = bobFeatures.initFeatures())
-        val aliceInit = Init(aliceFeatures)
-        val bobInit = Init(bobFeatures)
+        val aliceChannelParams = TestConstants.Alice.channelParams(payCommitTxFees = !channelFlags.nonInitiatorPaysCommitFees).copy(features = aliceFeatures1.initFeatures())
+        val bobChannelParams = TestConstants.Bob.channelParams(payCommitTxFees = channelFlags.nonInitiatorPaysCommitFees).copy(features = bobFeatures1.initFeatures())
+        val aliceInit = Init(aliceFeatures1)
+        val bobInit = Init(bobFeatures1)
         val (alice1, actionsAlice1) = alice.process(
             ChannelCommand.Init.Initiator(
                 CompletableDeferred(),
@@ -391,9 +409,13 @@ object TestsHelper {
         return s1 to remoteCommitPublished
     }
 
-    fun useAlternativeCommitSig(s: LNChannel<ChannelState>, commitment: Commitment, alternative: CommitSigTlv.AlternativeFeerateSig): Transaction {
+    fun useAlternativeCommitSig(s: LNChannel<ChannelState>, commitment: Commitment, alternative: Either<CommitSigTlv.AlternativeFeerateSig, CommitSigTlv.AlternativeFeeratePartialSig>): Transaction {
         val channelKeys = s.commitments.params.localParams.channelKeys(s.ctx.keyManager)
-        val alternativeSpec = commitment.localCommit.spec.copy(feerate = alternative.feerate)
+        val feerate = when (alternative) {
+            is Either.Left -> alternative.value.feerate
+            is Either.Right -> alternative.value.feerate
+        }
+        val alternativeSpec = commitment.localCommit.spec.copy(feerate = feerate)
         val fundingTxIndex = commitment.fundingTxIndex
         val commitInput = commitment.commitInput
         val remoteFundingPubKey = commitment.remoteFundingPubkey
@@ -409,10 +431,23 @@ object TestsHelper {
             localPerCommitmentPoint,
             alternativeSpec
         )
-        val localSig = Transactions.sign(localCommitTx, channelKeys.fundingKey(fundingTxIndex))
-        val signedCommitTx = Transactions.addSigs(localCommitTx, channelKeys.fundingPubKey(fundingTxIndex), remoteFundingPubKey, localSig, alternative.sig)
-        assertTrue(Transactions.checkSpendable(signedCommitTx).isSuccess)
-        return signedCommitTx.tx
+        return when (alternative) {
+            is Either.Left -> {
+                val localSig = Transactions.sign(localCommitTx, channelKeys.fundingKey(fundingTxIndex))
+                val signedCommitTx = Transactions.addSigs(localCommitTx, channelKeys.fundingPubKey(fundingTxIndex), remoteFundingPubKey, localSig, alternative.value.sig)
+                assertTrue(Transactions.checkSpendable(signedCommitTx).isSuccess)
+                signedCommitTx.tx
+            }
+
+            is Either.Right -> {
+                val remoteSig = alternative.value.psig
+                val localNonce = channelKeys.verificationNonce(fundingTxIndex, commitment.localCommit.index)
+                val signed = Transactions.partialSign(localCommitTx, channelKeys.fundingKey(fundingTxIndex), channelKeys.fundingPubKey(fundingTxIndex), remoteFundingPubKey, localNonce, alternative.value.psig.nonce)
+                    .flatMap { localSig -> Transactions.aggregatePartialSignatures(localCommitTx, localSig, remoteSig.partialSig, channelKeys.fundingPubKey(fundingTxIndex), remoteFundingPubKey, localNonce.second, remoteSig.nonce) }
+                    .map { aggSig -> Transactions.addAggregatedSignature(localCommitTx, aggSig) }
+                signed.right!!.tx
+            }
+        }
     }
 
     fun signAndRevack(alice: LNChannel<ChannelState>, bob: LNChannel<ChannelState>): Pair<LNChannel<ChannelState>, LNChannel<ChannelState>> {

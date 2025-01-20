@@ -3,6 +3,7 @@ package fr.acinq.lightning.crypto
 import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.DeterministicWallet.hardened
 import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
+import fr.acinq.bitcoin.crypto.musig2.Musig2
 import fr.acinq.bitcoin.crypto.musig2.SecretNonce
 import fr.acinq.bitcoin.io.ByteArrayInput
 import fr.acinq.bitcoin.utils.Either
@@ -15,6 +16,8 @@ import fr.acinq.lightning.utils.sat
 import fr.acinq.lightning.utils.sum
 import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.wire.LightningCodecs
+import io.ktor.utils.io.core.*
+import kotlin.random.Random
 
 interface KeyManager {
 
@@ -66,8 +69,39 @@ interface KeyManager {
         val delayedPaymentBasepoint: PublicKey = delayedPaymentKey.publicKey()
         val revocationBasepoint: PublicKey = revocationKey.publicKey()
         val temporaryChannelId: ByteVector32 = (ByteVector(ByteArray(33) { 0 }) + revocationBasepoint.value).sha256()
+        fun nonceSeed(fundingTxIndex: Long): ByteVector32 {
+            val seed = Crypto.hmac512("taproot-rev-root".toByteArray(), Crypto.sha256(shaSeed.toByteArray())).byteVector32()
+            return Bolt3Derivation.perCommitSecret(seed, fundingTxIndex).value
+        }
         fun commitmentPoint(index: Long): PublicKey = Bolt3Derivation.perCommitPoint(shaSeed, index)
         fun commitmentSecret(index: Long): PrivateKey = Bolt3Derivation.perCommitSecret(shaSeed, index)
+
+        /**
+         * Verification nonces are sent to our peer, and used to verify * their * signature of * our * commitment tx.
+         * They generated deterministically and don't need to be persisted.
+         * @param fundingTxIndex funding tx index
+         * @param commitIndex commitment index
+         * @return a deterministic verification nonce for a given funding and commitment index
+         */
+        fun verificationNonce(fundingTxIndex: Long, commitIndex: Long): Pair<SecretNonce, IndividualNonce> {
+            val fundingPrivateKey = fundingKey(fundingTxIndex)
+            val sessionId = Bolt3Derivation.perCommitSecret(nonceSeed(fundingTxIndex), commitIndex).value
+            val nonce = Musig2.generateNonce(sessionId, fundingPrivateKey, listOf(fundingPrivateKey.publicKey()))
+            return nonce
+        }
+
+        /**
+         * Signing nonces are used to sign our peer's commitment signature. They are generated on-the-fly, random (not deterministic) and
+         * do not need to be persisted.
+         * @param fundingTxIndex funding tx index
+         * @return a random musig2 nonce for a given funding index
+         */
+        fun signingNonce(fundingTxIndex: Long): Pair<SecretNonce, IndividualNonce> {
+            val fundingPrivateKey = fundingKey(fundingTxIndex)
+            val sessionId = Random.nextBytes(32).byteVector32()
+            val nonce = Musig2.generateNonce(sessionId, fundingPrivateKey, listOf(fundingPrivateKey.publicKey()))
+            return nonce
+        }
     }
 
     data class Bip84OnChainKeys(

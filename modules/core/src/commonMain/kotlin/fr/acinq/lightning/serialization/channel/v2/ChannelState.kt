@@ -1,5 +1,7 @@
 @file:OptIn(ExperimentalSerializationApi::class)
 @file:UseSerializers(
+    OutPointKSerializer::class,
+    InputInfoKSerializer::class,
     KeyPathKSerializer::class,
     EitherSerializer::class,
     ShaChainSerializer::class,
@@ -32,7 +34,6 @@
     FeeratePerKwSerializer::class,
     MilliSatoshiSerializer::class,
     UUIDSerializer::class,
-    OutPointKSerializer::class,
     TxOutKSerializer::class,
     TransactionKSerializer::class,
 )
@@ -61,6 +62,27 @@ import kotlinx.serialization.*
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+
+object InputInfoKSerializer : KSerializer<Transactions.InputInfo> {
+    @Serializable
+    @SerialName("fr.acinq.lightning.transactions.InputInfo")
+    private data class InputInfoSurrogate(@Contextual val outPoint: OutPoint, @Contextual val txOut: TxOut, @Contextual val redeemScript: ByteVector) {
+
+        constructor(input: Transactions.InputInfo.SegwitInput) : this(input.outPoint, input.txOut, input.redeemScript)
+    }
+
+    override val descriptor: SerialDescriptor = InputInfoSurrogate.serializer().descriptor
+
+    override fun serialize(encoder: Encoder, value: Transactions.InputInfo) {
+        val surrogate = InputInfoSurrogate(value as Transactions.InputInfo.SegwitInput)
+        return encoder.encodeSerializableValue(InputInfoSurrogate.serializer(), surrogate)
+    }
+
+    override fun deserialize(decoder: Decoder): Transactions.InputInfo {
+        val surrogate = decoder.decodeSerializableValue(InputInfoSurrogate.serializer())
+        return Transactions.InputInfo.SegwitInput(surrogate.outPoint, surrogate.txOut, surrogate.redeemScript)
+    }
+}
 
 @Serializer(forClass = FundingSigned::class)
 object FundingSignedSerializer

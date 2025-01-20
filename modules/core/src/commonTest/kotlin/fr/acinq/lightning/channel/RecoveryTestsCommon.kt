@@ -47,7 +47,8 @@ class RecoveryTestsCommon {
                 TestConstants.Bob.nodeParams.dustLimit,
                 localPaymentPoint,
                 Script.write(Script.pay2wpkh(fundingKey)).toByteVector(),
-                FeeratePerKw(Satoshi(750))
+                FeeratePerKw(Satoshi(750)),
+                isTaprootChannel = false
             )
             return when (mainTx) {
                 is Transactions.TxResult.Success -> {

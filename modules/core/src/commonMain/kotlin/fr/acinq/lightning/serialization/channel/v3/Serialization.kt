@@ -67,6 +67,7 @@ object Serialization {
             contextual(TransactionKSerializer)
             contextual(BlockHeaderKSerializer)
             contextual(EncryptedChannelDataSerializer)
+            contextual(InputInfoKSerializer)
         })
     }
 

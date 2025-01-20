@@ -221,10 +221,12 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertEquals(1, bob4.commitments.changes.remoteNextHtlcId)
     }
 
-    @Test
-    fun `resume htlc settlement`() {
+    fun resumeHtlcSettlement(isTaprootChannel: Boolean) {
         val (alice0, bob0, revB) = run {
-            val (alice0, bob0) = TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            val (alice0, bob0) = when (isTaprootChannel) {
+                true -> TestsHelper.reachNormal(channelType = ChannelType.SupportedChannelType.SimpleTaprootStaging, bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+                else -> TestsHelper.reachNormal(bobFeatures = TestConstants.Bob.nodeParams.features.remove(Feature.ChannelBackupClient))
+            }
             val (nodes1, r1, htlc1) = TestsHelper.addHtlc(15_000_000.msat, bob0, alice0)
             val (bob1, alice1) = TestsHelper.crossSign(nodes1.first, nodes1.second)
             val (bob2, alice2) = TestsHelper.fulfillHtlc(htlc1.id, r1, bob1, alice1)
@@ -278,6 +280,16 @@ class OfflineTestsCommon : LightningTestSuite() {
         assertIs<Normal>(bob5.state)
         assertEquals(4, alice5.commitments.localCommitIndex)
         assertEquals(4, bob5.commitments.localCommitIndex)
+    }
+
+    @Test
+    fun `resume htlc settlement`() {
+        resumeHtlcSettlement(isTaprootChannel = false)
+    }
+
+    @Test
+    fun `resume htlc settlement -- simple taproot channels`() {
+        resumeHtlcSettlement(isTaprootChannel = true)
     }
 
     @Test

@@ -317,7 +317,7 @@ class ChannelDataTestsCommon : LightningTestSuite(), LoggingContext {
 
     companion object {
         private fun txInput(tx: Transaction): InputInfo {
-            return InputInfo(tx.txIn.first().outPoint, TxOut(0.sat, ByteVector.empty), ByteVector.empty)
+            return InputInfo.SegwitInput(tx.txIn.first().outPoint, TxOut(0.sat, ByteVector.empty), Script.pay2wpkh(randomKey().publicKey()))
         }
 
         private fun createClosingTransactions(): Triple<LocalCommitPublished, RemoteCommitPublished, RevokedCommitPublished> {

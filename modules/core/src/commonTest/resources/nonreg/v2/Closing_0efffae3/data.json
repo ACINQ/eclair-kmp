@@ -133,6 +133,7 @@
                     "publishableTxs": {
                         "commitTx": {
                             "input": {
+                                "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                                 "outPoint": "bdcd274e9bc89c621b30596e344389d28c3a92f820ef5a680ebfcb615b827c2f:0",
                                 "txOut": {
                                     "amount": 1000000,
@@ -184,6 +185,7 @@
             "claimMainOutputTx": {
                 "type": "fr.acinq.lightning.transactions.Transactions.TransactionWithInputInfo.ClaimRemoteCommitMainOutputTx.ClaimRemoteDelayedOutputTx",
                 "input": {
+                    "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                     "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:7",
                     "txOut": {
                         "amount": 730280,
@@ -195,6 +197,7 @@
             },
             "mainPenaltyTx": {
                 "input": {
+                    "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                     "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:6",
                     "txOut": {
                         "amount": 162000,
@@ -207,6 +210,7 @@
             "htlcPenaltyTxs": [
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:2",
                         "txOut": {
                             "amount": 18000,
@@ -218,6 +222,7 @@
                 },
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:3",
                         "txOut": {
                             "amount": 20000,
@@ -229,6 +234,7 @@
                 },
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:4",
                         "txOut": {
                             "amount": 25000,
@@ -240,6 +246,7 @@
                 },
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "3cdaac5fd4ca78ec2efca165400efb5078f9f57d221a733d372f0213136b92eb:5",
                         "txOut": {
                             "amount": 35000,
@@ -253,6 +260,7 @@
             "claimHtlcDelayedPenaltyTxs": [
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "34d00149cc8115b9e222e7bafcda6ebbcfcda8e2df8b5afe9c81f8950ac21785:0",
                         "txOut": {
                             "amount": 31470,
@@ -264,6 +272,7 @@
                 },
                 {
                     "input": {
+                        "type": "fr.acinq.lightning.transactions.Transactions.InputInfo.SegwitInput",
                         "outPoint": "cae12bb3c504d6a627b7ca1d0b7e88cb74bb6d82e216adf71be70df2057fdab3:0",
                         "txOut": {
                             "amount": 14670,

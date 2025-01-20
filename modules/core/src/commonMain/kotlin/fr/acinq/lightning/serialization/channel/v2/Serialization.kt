@@ -65,6 +65,7 @@ object Serialization {
             contextual(TxOutKSerializer)
             contextual(TransactionKSerializer)
             contextual(BlockHeaderKSerializer)
+            contextual(InputInfoKSerializer)
         })
     }
 

@@ -208,7 +208,7 @@ data class Closing(
 
                         val revokedCommitPublishActions = mutableListOf<ChannelAction>()
                         val revokedCommitPublished1 = revokedCommitPublished.map { rev ->
-                            val (newRevokedCommitPublished, penaltyTxs) = claimRevokedHtlcTxOutputs(channelKeys(), commitments.params, rev, watch.tx, currentOnChainFeerates())
+                            val (newRevokedCommitPublished, penaltyTxs) = claimRevokedHtlcTxOutputs(channelKeys(), commitments.params, rev, watch.tx, currentOnChainFeerates(), commitments.isTaprootChannel)
                             penaltyTxs.forEach {
                                 revokedCommitPublishActions += ChannelAction.Blockchain.PublishTx(it)
                                 revokedCommitPublishActions += ChannelAction.Blockchain.SendWatch(WatchSpent(channelId, watch.tx, it.input.outPoint.index.toInt(), BITCOIN_OUTPUT_SPENT))
@@ -319,7 +319,7 @@ data class Closing(
                     // note spendingTx != Nil (that's a requirement of DATA_CLOSING)
                     val exc = FundingTxSpent(channelId, spendingTxs.first().txid)
                     val error = Error(channelId, exc.message)
-                    Pair(this@Closing, listOf(ChannelAction.Message.Send(error)))
+                    Pair(this@Closing, listOf(ChannelAction.Message.Send(error))) // README: we don't need to update nonces, we're already in CLOSING state
                 }
                 is Error -> {
                     logger.error { "peer sent error: ascii=${cmd.message.toAscii()} bin=${cmd.message.data.toHex()}" }

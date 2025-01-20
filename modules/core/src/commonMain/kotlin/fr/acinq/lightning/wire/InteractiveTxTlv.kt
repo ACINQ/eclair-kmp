@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
+import fr.acinq.lightning.channel.PartialSignatureWithNonce
 import fr.acinq.lightning.utils.sat
 import fr.acinq.lightning.utils.toByteVector
 import fr.acinq.lightning.utils.toByteVector64
@@ -72,19 +73,37 @@ sealed class TxRemoveOutputTlv : Tlv
 
 sealed class TxCompleteTlv : Tlv {
     /** Public nonces for all Musig2 swap-in inputs (local and remote), ordered by serial id. */
-    data class Nonces(val nonces: List<IndividualNonce>) : TxCompleteTlv() {
-        override val tag: Long get() = Nonces.tag
+    data class SwapInNonces(val nonces: List<IndividualNonce>) : TxCompleteTlv() {
+        override val tag: Long get() = SwapInNonces.tag
 
         override fun write(out: Output) {
             nonces.forEach { LightningCodecs.writeBytes(it.toByteArray(), out) }
         }
 
-        companion object : TlvValueReader<Nonces> {
+        companion object : TlvValueReader<SwapInNonces> {
             const val tag: Long = 101
-            override fun read(input: Input): Nonces {
+            override fun read(input: Input): SwapInNonces {
                 val count = input.availableBytes / 66
                 val nonces = (0 until count).map { IndividualNonce(LightningCodecs.bytes(input, 66)) }
-                return Nonces(nonces)
+                return SwapInNonces(nonces)
+            }
+        }
+    }
+
+    /** Public nonces for all Musig2 shared inputs (local and remote), ordered by serial id. */
+    data class SharedInputNonces(val nonces: List<IndividualNonce>) : TxCompleteTlv() {
+        override val tag: Long get() = SharedInputNonces.tag
+
+        override fun write(out: Output) {
+            nonces.forEach { LightningCodecs.writeBytes(it.toByteArray(), out) }
+        }
+
+        companion object : TlvValueReader<SharedInputNonces> {
+            const val tag: Long = 6
+            override fun read(input: Input): SharedInputNonces {
+                val count = input.availableBytes / 66
+                val nonces = (0 until count).map { IndividualNonce(LightningCodecs.bytes(input, 66)) }
+                return SharedInputNonces(nonces)
             }
         }
     }
@@ -99,6 +118,24 @@ sealed class TxSignaturesTlv : Tlv {
         companion object : TlvValueReader<PreviousFundingTxSig> {
             const val tag: Long = 601
             override fun read(input: Input): PreviousFundingTxSig = PreviousFundingTxSig(LightningCodecs.bytes(input, 64).toByteVector64())
+        }
+    }
+
+    data class PreviousFundingTxPartialSig(val partialSigWithNonce: PartialSignatureWithNonce) : TxSignaturesTlv() {
+        override val tag: Long get() = PreviousFundingTxPartialSig.tag
+        override fun write(out: Output) {
+            LightningCodecs.writeBytes(partialSigWithNonce.partialSig.toByteArray(), out)
+            LightningCodecs.writeBytes(partialSigWithNonce.nonce.toByteArray(), out)
+        }
+
+        companion object : TlvValueReader<PreviousFundingTxPartialSig> {
+            const val tag: Long = 2
+            override fun read(input: Input): PreviousFundingTxPartialSig = PreviousFundingTxPartialSig(
+                PartialSignatureWithNonce(
+                    LightningCodecs.bytes(input, 32).byteVector32(),
+                    IndividualNonce(LightningCodecs.bytes(input, 66))
+                )
+            )
         }
     }
 

@@ -59,6 +59,9 @@ data class WaitForChannelReady(
                     Pair(this@WaitForChannelReady, listOf(ChannelAction.Message.Send(TxAbort(channelId, InvalidRbfTxConfirmed(channelId, commitments.latest.fundingTxId).message))))
                 }
                 is ChannelReady -> {
+                    if (commitments.isTaprootChannel) {
+                        require(cmd.message.nextLocalNonce != null) { "missing next local nonce" }
+                    }
                     // we create a channel_update early so that we can use it to send payments through this channel, but it won't be propagated to other nodes since the channel is not yet announced
                     val initialChannelUpdate = Announcements.makeChannelUpdate(
                         staticParams.nodeParams.chainHash,
@@ -73,7 +76,7 @@ data class WaitForChannelReady(
                         enable = Helpers.aboveReserve(commitments)
                     )
                     val nextState = Normal(
-                        commitments,
+                        commitments.copy(nextRemoteNonces = cmd.message.nextLocalNonce?.let { listOf(it) } ?: listOf()),
                         shortChannelId,
                         initialChannelUpdate,
                         null,

@@ -270,6 +270,12 @@ sealed class Feature {
         override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
     }
 
+    @Serializable
+    object SimpleTaprootStaging : Feature() {
+        override val rfcName get() = "option_simple_taproot_staging"
+        override val mandatory get() = 182 // README: this is not the feature bit defined in the bolt proposal (180) because we don't support zero-fee anchor outputs
+        override val scopes: Set<FeatureScope> get() = setOf(FeatureScope.Init, FeatureScope.Node)
+    }
 }
 
 @Serializable
@@ -353,7 +359,8 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.ChannelBackupProvider,
             Feature.ExperimentalSplice,
             Feature.OnTheFlyFunding,
-            Feature.FundingFeeCredit
+            Feature.FundingFeeCredit,
+            Feature.SimpleTaprootStaging
         )
 
         operator fun invoke(bytes: ByteVector): Features = invoke(bytes.toByteArray())
@@ -387,7 +394,8 @@ data class Features(val activated: Map<Feature, FeatureSupport>, val unknown: Se
             Feature.TrampolinePayment to listOf(Feature.PaymentSecret),
             Feature.ExperimentalTrampolinePayment to listOf(Feature.PaymentSecret),
             Feature.OnTheFlyFunding to listOf(Feature.ExperimentalSplice),
-            Feature.FundingFeeCredit to listOf(Feature.OnTheFlyFunding)
+            Feature.FundingFeeCredit to listOf(Feature.OnTheFlyFunding),
+            Feature.SimpleTaprootStaging to listOf(Feature.StaticRemoteKey)
         )
 
         class FeatureException(message: String) : IllegalArgumentException(message)

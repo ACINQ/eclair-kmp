@@ -2,6 +2,7 @@ package fr.acinq.lightning.channel.states
 
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.PublicKey
+import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
 import fr.acinq.lightning.channel.*
@@ -41,7 +42,8 @@ data class WaitForFundingCreated(
     val channelConfig: ChannelConfig,
     val channelFeatures: ChannelFeatures,
     val liquidityPurchase: LiquidityAds.Purchase?,
-    val channelOrigin: Origin?
+    val channelOrigin: Origin?,
+    val secondRemoteNonce: IndividualNonce?
 ) : ChannelState() {
     val channelId: ByteVector32 = interactiveTxSession.fundingParams.channelId
 
@@ -94,7 +96,8 @@ data class WaitForFundingCreated(
                                         session,
                                         remoteSecondPerCommitmentPoint,
                                         liquidityPurchase,
-                                        channelOrigin
+                                        channelOrigin,
+                                        secondRemoteNonce
                                     )
                                     val actions = buildList {
                                         interactiveTxAction.txComplete?.let { add(ChannelAction.Message.Send(it)) }

@@ -3,6 +3,7 @@ package fr.acinq.lightning.channel.states
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.lightning.ChannelEvents
+import fr.acinq.lightning.Feature
 import fr.acinq.lightning.channel.*
 import fr.acinq.lightning.channel.Helpers.Funding.computeChannelId
 import fr.acinq.lightning.utils.msat
@@ -55,7 +56,7 @@ data class WaitForAcceptChannel(
                                 lastSent.requestFunding,
                                 staticParams.remoteNodeId,
                                 channelId,
-                                fundingParams.fundingPubkeyScript(channelKeys),
+                                fundingParams.fundingPubkeyScript(channelKeys, isTaprootChannel = channelFeatures.hasFeature(Feature.SimpleTaprootStaging)),
                                 accept.fundingAmount,
                                 lastSent.fundingFeerate,
                                 isChannelCreation = true,
@@ -72,7 +73,8 @@ data class WaitForAcceptChannel(
                                     keyManager.swapInOnChainWallet,
                                     fundingParams,
                                     init.walletInputs,
-                                    liquidityPurchase.value
+                                    liquidityPurchase.value,
+                                    isTaprootChannel = channelFeatures.hasFeature(Feature.SimpleTaprootStaging)                                    
                                 )) {
                                     is Either.Left -> {
                                         logger.error { "could not fund channel: ${fundingContributions.value}" }
@@ -89,7 +91,8 @@ data class WaitForAcceptChannel(
                                             0.msat,
                                             0.msat,
                                             emptySet(),
-                                            fundingContributions.value
+                                            fundingContributions.value,
+                                            firstRemoteNonce = cmd.message.firstRemoteNonce
                                         ).send()
                                         when (interactiveTxAction) {
                                             is InteractiveTxSessionAction.SendMessage -> {
@@ -105,7 +108,8 @@ data class WaitForAcceptChannel(
                                                     init.channelConfig,
                                                     channelFeatures,
                                                     liquidityPurchase.value,
-                                                    channelOrigin
+                                                    channelOrigin,
+                                                    cmd.message.secondRemoteNonce                                    
                                                 )
                                                 val actions = listOf(
                                                     ChannelAction.ChannelId.IdAssigned(staticParams.remoteNodeId, temporaryChannelId, channelId),

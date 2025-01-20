@@ -2,10 +2,14 @@ package fr.acinq.lightning.channel
 
 import fr.acinq.bitcoin.*
 import fr.acinq.bitcoin.Crypto.sha256
+import fr.acinq.bitcoin.crypto.musig2.IndividualNonce
+import fr.acinq.bitcoin.crypto.musig2.SecretNonce
 import fr.acinq.bitcoin.utils.Either
 import fr.acinq.bitcoin.utils.Try
+import fr.acinq.bitcoin.utils.flatMap
 import fr.acinq.lightning.CltvExpiryDelta
 import fr.acinq.lightning.Feature
+import fr.acinq.lightning.Features
 import fr.acinq.lightning.MilliSatoshi
 import fr.acinq.lightning.blockchain.fee.FeeratePerByte
 import fr.acinq.lightning.blockchain.fee.FeeratePerKw
@@ -45,6 +49,8 @@ data class ChannelParams(
     init {
         require(channelConfig.hasOption(ChannelConfigOption.FundingPubKeyBasedChannelKeyPath)) { "FundingPubKeyBasedChannelKeyPath option must be enabled" }
     }
+
+    val isTaprootChannel = Features.canUseFeature(localParams.features, remoteParams.features, Feature.SimpleTaprootStaging)
 
     fun updateFeatures(localInit: Init, remoteInit: Init) = this.copy(
         localParams = localParams.copy(features = localInit.features),
@@ -94,13 +100,15 @@ data class CommitmentChanges(val localChanges: LocalChanges, val remoteChanges: 
 
 data class HtlcTxAndSigs(val txinfo: HtlcTx, val localSig: ByteVector64, val remoteSig: ByteVector64)
 data class PublishableTxs(val commitTx: CommitTx, val htlcTxsAndSigs: List<HtlcTxAndSigs>)
+data class PartialSignatureWithNonce(val partialSig: ByteVector32, val nonce: IndividualNonce)
 
 /** The local commitment maps to a commitment transaction that we can sign and broadcast if necessary. */
 data class LocalCommit(val index: Long, val spec: CommitmentSpec, val publishableTxs: PublishableTxs) {
     companion object {
         fun fromCommitSig(keyManager: KeyManager.ChannelKeys, params: ChannelParams, fundingTxIndex: Long,
                           remoteFundingPubKey: PublicKey, commitInput: Transactions.InputInfo, commit: CommitSig,
-                          localCommitIndex: Long, spec: CommitmentSpec, localPerCommitmentPoint: PublicKey, log: MDCLogger): Either<ChannelException, LocalCommit> {
+                          localCommitIndex: Long, spec: CommitmentSpec, localPerCommitmentPoint: PublicKey, localNonce: Pair<SecretNonce, IndividualNonce>?, log: MDCLogger
+        ): Either<ChannelException, LocalCommit> {
             val (localCommitTx, sortedHtlcTxs) = Commitments.makeLocalTxs(
                 keyManager,
                 commitTxNumber = localCommitIndex,
@@ -112,13 +120,26 @@ data class LocalCommit(val index: Long, val spec: CommitmentSpec, val publishabl
                 localPerCommitmentPoint = localPerCommitmentPoint,
                 spec
             )
-            val sig = Transactions.sign(localCommitTx, keyManager.fundingKey(fundingTxIndex))
 
+            val localFundingKey = keyManager.fundingKey(fundingTxIndex)
+            val signedCommitTx = when (commit.sigOrPartialSig) {
+                is Either.Left -> {
+                    val sig = localCommitTx.sign(localFundingKey)
+                    Transactions.addSigs(localCommitTx, localFundingKey.publicKey(), remoteFundingPubKey, sig, commit.signature)
+                }
+
+                is Either.Right -> {
+                    val remoteSig = commit.sigOrPartialSig.right
+                    val signed = Transactions.partialSign(localCommitTx, localFundingKey, localFundingKey.publicKey(), remoteFundingPubKey, localNonce!!, remoteSig.nonce)
+                        .flatMap { localSig -> Transactions.aggregatePartialSignatures(localCommitTx, localSig, remoteSig.partialSig, localFundingKey.publicKey(), remoteFundingPubKey, localNonce.second, remoteSig.nonce) }
+                        .map { aggSig -> Transactions.addAggregatedSignature(localCommitTx, aggSig) }
+                    signed.right!!
+                }
+            }
             // no need to compute htlc sigs if commit sig doesn't check out
-            val signedCommitTx = Transactions.addSigs(localCommitTx, keyManager.fundingPubKey(fundingTxIndex), remoteFundingPubKey, sig, commit.signature)
             when (val check = Transactions.checkSpendable(signedCommitTx)) {
                 is Try.Failure -> {
-                    log.error(check.error) { "remote signature $commit is invalid" }
+                    log.error(check.error) { "remote signature $commit is invalid, localNonce = $localNonce" }
                     return Either.Left(InvalidCommitmentSignature(params.channelId, signedCommitTx.tx.txid))
                 }
                 else -> {}
@@ -140,7 +161,7 @@ data class LocalCommit(val index: Long, val spec: CommitmentSpec, val publishabl
                     is HtlcTx.HtlcSuccessTx -> {
                         // we can't check that htlc-success tx are spendable because we need the payment preimage; thus we only check the remote sig
                         // which was created with SIGHASH_SINGLE || SIGHASH_ANYONECANPAY
-                        if (!Transactions.checkSig(htlcTx, remoteSig, remoteHtlcPubkey, SigHash.SIGHASH_SINGLE or SigHash.SIGHASH_ANYONECANPAY)) {
+                        if (!htlcTx.checkSig(remoteSig, remoteHtlcPubkey, SigHash.SIGHASH_SINGLE or SigHash.SIGHASH_ANYONECANPAY)) {
                             return Either.Left(InvalidHtlcSignature(params.channelId, htlcTx.tx.txid))
                         }
                         HtlcTxAndSigs(htlcTx, localSig, remoteSig)
@@ -154,7 +175,7 @@ data class LocalCommit(val index: Long, val spec: CommitmentSpec, val publishabl
 
 /** The remote commitment maps to a commitment transaction that only our peer can sign and broadcast. */
 data class RemoteCommit(val index: Long, val spec: CommitmentSpec, val txid: TxId, val remotePerCommitmentPoint: PublicKey) {
-    fun sign(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, fundingTxIndex: Long, remoteFundingPubKey: PublicKey, commitInput: Transactions.InputInfo): CommitSig {
+    fun sign(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, fundingTxIndex: Long, remoteFundingPubKey: PublicKey, commitInput: Transactions.InputInfo, remoteNonce: IndividualNonce?): CommitSig {
         val (remoteCommitTx, sortedHtlcsTxs) = Commitments.makeRemoteTxs(
             channelKeys,
             index,
@@ -166,14 +187,25 @@ data class RemoteCommit(val index: Long, val spec: CommitmentSpec, val txid: TxI
             remotePerCommitmentPoint = remotePerCommitmentPoint,
             spec
         )
-        val sig = Transactions.sign(remoteCommitTx, channelKeys.fundingKey(fundingTxIndex))
+        val sig = remoteCommitTx.sign(channelKeys.fundingKey(fundingTxIndex))
+        val partialSig = when (remoteNonce) {
+            null -> null
+            else -> {
+                val localNonce = channelKeys.signingNonce(fundingTxIndex)
+                val fundingKey = channelKeys.fundingKey(fundingTxIndex)
+                PartialSignatureWithNonce(
+                    Transactions.partialSign(remoteCommitTx, fundingKey, fundingKey.publicKey(), remoteFundingPubKey, localNonce, remoteNonce).right!!,
+                    localNonce.second
+                )
+            }
+        }
         // we sign our peer's HTLC txs with SIGHASH_SINGLE || SIGHASH_ANYONECANPAY
-        val htlcSigs = sortedHtlcsTxs.map { Transactions.sign(it, channelKeys.htlcKey.deriveForCommitment(remotePerCommitmentPoint), SigHash.SIGHASH_SINGLE or SigHash.SIGHASH_ANYONECANPAY) }
-        return CommitSig(params.channelId, sig, htlcSigs.toList())
+        val htlcSigs = sortedHtlcsTxs.map { it.sign(channelKeys.htlcKey.deriveForCommitment(remotePerCommitmentPoint), SigHash.SIGHASH_SINGLE or SigHash.SIGHASH_ANYONECANPAY) }
+        return CommitSig(params.channelId, sig, htlcSigs.toList(), TlvStream(setOfNotNull(partialSig?.let { CommitSigTlv.PartialSignatureWithNonceTlv(it) })))
     }
 
-    fun sign(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, signingSession: InteractiveTxSigningSession): CommitSig =
-        sign(channelKeys, params, signingSession.fundingTxIndex, signingSession.fundingParams.remoteFundingPubkey, signingSession.commitInput)
+    fun sign(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, signingSession: InteractiveTxSigningSession, remoteNonce: IndividualNonce?): CommitSig =
+        sign(channelKeys, params, signingSession.fundingTxIndex, signingSession.fundingParams.remoteFundingPubkey, signingSession.commitInput, remoteNonce)
 }
 
 /** We have the next remote commit when we've sent our commit_sig but haven't yet received their revoke_and_ack. */
@@ -254,9 +286,9 @@ data class Commitment(
         val balanceNoFees = (reduced.toRemote - localChannelReserve(params).toMilliSatoshi()).coerceAtLeast(0.msat)
         return if (params.localParams.paysCommitTxFees) {
             // The initiator always pays the on-chain fees, so we must subtract that from the amount we can send.
-            val commitFees = commitTxFeeMsat(params.remoteParams.dustLimit, reduced)
+            val commitFees = commitTxFeeMsat(params.remoteParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
             // the initiator needs to keep a "initiator fee buffer" (see explanation above)
-            val initiatorFeeBuffer = commitTxFeeMsat(params.remoteParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2)) + htlcOutputFee(reduced.feerate * 2)
+            val initiatorFeeBuffer = commitTxFeeMsat(params.remoteParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2), params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging)) + htlcOutputFee(reduced.feerate * 2)
             val amountToReserve = commitFees.coerceAtLeast(initiatorFeeBuffer)
             if (balanceNoFees - amountToReserve < offeredHtlcTrimThreshold(params.remoteParams.dustLimit, reduced).toMilliSatoshi()) {
                 // htlc will be trimmed
@@ -283,9 +315,9 @@ data class Commitment(
             balanceNoFees
         } else {
             // The initiator always pays the on-chain fees, so we must subtract that from the amount we can receive.
-            val commitFees = commitTxFeeMsat(params.localParams.dustLimit, reduced)
+            val commitFees = commitTxFeeMsat(params.localParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
             // we expected the initiator to keep a "initiator fee buffer" (see explanation above)
-            val initiatorFeeBuffer = commitTxFeeMsat(params.localParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2)) + htlcOutputFee(reduced.feerate * 2)
+            val initiatorFeeBuffer = commitTxFeeMsat(params.localParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2), params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging)) + htlcOutputFee(reduced.feerate * 2)
             val amountToReserve = commitFees.coerceAtLeast(initiatorFeeBuffer)
             if (balanceNoFees - amountToReserve < receivedHtlcTrimThreshold(params.localParams.dustLimit, reduced).toMilliSatoshi()) {
                 // htlc will be trimmed
@@ -351,10 +383,10 @@ data class Commitment(
         val outgoingHtlcs = reduced.htlcs.incomings()
 
         // note that the initiator pays the fee, so if sender != initiator, both sides will have to afford this payment
-        val fees = commitTxFee(params.remoteParams.dustLimit, reduced)
+        val fees = commitTxFee(params.remoteParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
         // the initiator needs to keep an extra buffer to be able to handle a x2 feerate increase and an additional htlc to avoid
         // getting the channel stuck (see https://github.com/lightningnetwork/lightning-rfc/issues/728).
-        val initiatorFeeBuffer = commitTxFeeMsat(params.remoteParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2)) + htlcOutputFee(reduced.feerate * 2)
+        val initiatorFeeBuffer = commitTxFeeMsat(params.remoteParams.dustLimit, reduced.copy(feerate = reduced.feerate * 2), params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging)) + htlcOutputFee(reduced.feerate * 2)
         // NB: increasing the feerate can actually remove htlcs from the commit tx (if they fall below the trim threshold)
         // which may result in a lower commit tx fee; this is why we take the max of the two.
         val missingForSender = reduced.toRemote - localChannelReserve(params).toMilliSatoshi() - (if (params.localParams.paysCommitTxFees) fees.toMilliSatoshi().coerceAtLeast(initiatorFeeBuffer) else 0.msat)
@@ -403,7 +435,7 @@ data class Commitment(
         val incomingHtlcs = reduced.htlcs.incomings()
 
         // note that the initiator pays the fee, so if sender != initiator, both sides will have to afford this payment
-        val fees = commitTxFee(params.localParams.dustLimit, reduced)
+        val fees = commitTxFee(params.localParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
         // NB: we don't enforce the initiatorFeeReserve (see sendAdd) because it would confuse a remote initiator that doesn't have this mitigation in place
         // We could enforce it once we're confident a large portion of the network implements it.
         val missingForSender = reduced.toRemote - remoteChannelReserve(params).toMilliSatoshi() - (if (params.localParams.paysCommitTxFees) 0.sat else fees).toMilliSatoshi()
@@ -436,7 +468,7 @@ data class Commitment(
         val reduced = CommitmentSpec.reduce(remoteCommit.spec, changes.remoteChanges.acked, changes.localChanges.proposed)
         // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
         // we look from remote's point of view, so if local is initiator remote doesn't pay the fees
-        val fees = commitTxFee(params.remoteParams.dustLimit, reduced)
+        val fees = commitTxFee(params.remoteParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
         val missing = reduced.toRemote.truncateToSatoshi() - localChannelReserve(params) - fees
         return if (missing < 0.sat) {
             Either.Left(CannotAffordFees(params.channelId, -missing, localChannelReserve(params), fees))
@@ -453,7 +485,7 @@ data class Commitment(
         // It is easier to do it here because under certain (race) conditions spec allows a lower-than-normal fee to be paid,
         // and it would be tricky to check if the conditions are met at signing
         // (it also means that we need to check the fee of the initial commitment tx somewhere)
-        val fees = commitTxFee(params.localParams.dustLimit, reduced)
+        val fees = commitTxFee(params.localParams.dustLimit, reduced, params.channelFeatures.hasFeature(Feature.SimpleTaprootStaging))
         val missing = reduced.toRemote.truncateToSatoshi() - remoteChannelReserve(params) - fees
         return if (missing < 0.sat) {
             Either.Left(CannotAffordFees(params.channelId, -missing, remoteChannelReserve(params), fees))
@@ -462,7 +494,15 @@ data class Commitment(
         }
     }
 
-    fun sendCommit(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, changes: CommitmentChanges, remoteNextPerCommitmentPoint: PublicKey, batchSize: Int, log: MDCLogger): Pair<Commitment, CommitSig> {
+    fun sendCommit(
+        channelKeys: KeyManager.ChannelKeys,
+        params: ChannelParams,
+        changes: CommitmentChanges,
+        remoteNextPerCommitmentPoint: PublicKey,
+        batchSize: Int,
+        remoteNonce: IndividualNonce?,
+        log: MDCLogger
+    ): Pair<Commitment, CommitSig> {
         // remote commitment will include all local changes + remote acked changes
         val spec = CommitmentSpec.reduce(remoteCommit.spec, changes.remoteChanges.acked, changes.localChanges.proposed)
         val (remoteCommitTx, sortedHtlcTxs) = Commitments.makeRemoteTxs(
@@ -477,6 +517,17 @@ data class Commitment(
             spec
         )
         val sig = Transactions.sign(remoteCommitTx, channelKeys.fundingKey(fundingTxIndex))
+        val partialSig = when (remoteNonce) {
+            null -> null
+            else -> {
+                // we generate a new nonce each time we sign their commit tx
+                val localNonce = channelKeys.signingNonce(fundingTxIndex)
+                val fundingKey = channelKeys.fundingKey(fundingTxIndex)
+                val psig = Transactions.partialSign(remoteCommitTx, fundingKey, fundingKey.publicKey(), remoteFundingPubkey, localNonce, remoteNonce).right!!
+                log.debug { "sendCommit: creating partial sig $psig for remote commit tx ${remoteCommitTx.tx.txid} with remote nonce $remoteNonce and remoteNextPerCommitmentPoint = $remoteNextPerCommitmentPoint" }
+                PartialSignatureWithNonce(psig, localNonce.second)
+            }
+        }
 
         // we sign our peer's HTLC txs with SIGHASH_SINGLE || SIGHASH_ANYONECANPAY
         val htlcSigs = sortedHtlcTxs.map { Transactions.sign(it, channelKeys.htlcKey.deriveForCommitment(remoteNextPerCommitmentPoint), SigHash.SIGHASH_SINGLE or SigHash.SIGHASH_ANYONECANPAY) }
@@ -490,24 +541,56 @@ data class Commitment(
 
         val tlvs = buildSet {
             if (spec.htlcs.isEmpty()) {
-                val alternativeSigs = Commitments.alternativeFeerates.map { feerate ->
+                val alternativeRemoteCommitTxs = Commitments.alternativeFeerates.map { feerate ->
                     val alternativeSpec = spec.copy(feerate = feerate)
-                    val (alternativeRemoteCommitTx, _) = Commitments.makeRemoteTxs(channelKeys, commitTxNumber = remoteCommit.index + 1, params.localParams, params.remoteParams, fundingTxIndex = fundingTxIndex, remoteFundingPubKey = remoteFundingPubkey, commitInput, remotePerCommitmentPoint = remoteNextPerCommitmentPoint, alternativeSpec)
-                    val alternativeSig = Transactions.sign(alternativeRemoteCommitTx, channelKeys.fundingKey(fundingTxIndex))
-                    CommitSigTlv.AlternativeFeerateSig(feerate, alternativeSig)
+                    val (alternativeRemoteCommitTx, _) = Commitments.makeRemoteTxs(
+                        channelKeys,
+                        commitTxNumber = remoteCommit.index + 1,
+                        params.localParams,
+                        params.remoteParams,
+                        fundingTxIndex = fundingTxIndex,
+                        remoteFundingPubKey = remoteFundingPubkey,
+                        commitInput,
+                        remotePerCommitmentPoint = remoteNextPerCommitmentPoint,
+                        alternativeSpec
+                    )
+                    feerate to alternativeRemoteCommitTx
                 }
-                add(CommitSigTlv.AlternativeFeerateSigs(alternativeSigs))
+                when (remoteNonce) {
+                    null -> {
+                        val alternativeSigs = alternativeRemoteCommitTxs.map {
+                            val alternativeSig = Transactions.sign(it.second, channelKeys.fundingKey(fundingTxIndex))
+                            CommitSigTlv.AlternativeFeerateSig(it.first, alternativeSig)
+                        }
+                        add(CommitSigTlv.AlternativeFeerateSigs(alternativeSigs))
+                    }
+
+                    else -> {
+                        val alternativeSigs = alternativeRemoteCommitTxs.map {
+                            val localNonce = channelKeys.signingNonce(fundingTxIndex)
+                            val fundingKey = channelKeys.fundingKey(fundingTxIndex)
+                            val alternativePsig = Transactions.partialSign(it.second, fundingKey, fundingKey.publicKey(), remoteFundingPubkey, localNonce, remoteNonce).right!!
+                            log.debug { "sendCommit: creating partial sig $alternativePsig for alternative remote commit tx ${it.second.tx.txid} with remote nonce $remoteNonce and remoteNextPerCommitmentPoint = $remoteNextPerCommitmentPoint" }
+                            CommitSigTlv.AlternativeFeeratePartialSig(it.first, PartialSignatureWithNonce(alternativePsig, localNonce.second))
+                        }
+                        add(CommitSigTlv.AlternativeFeeratePartialSigs(alternativeSigs))
+                    }
+                }
             }
             if (batchSize > 1) {
                 add(CommitSigTlv.Batch(batchSize))
             }
+            if (partialSig != null) {
+                add(CommitSigTlv.PartialSignatureWithNonceTlv(partialSig))
+            }
         }
+
         val commitSig = CommitSig(params.channelId, sig, htlcSigs.toList(), TlvStream(tlvs))
         val commitment1 = copy(nextRemoteCommit = NextRemoteCommit(commitSig, RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint)))
         return Pair(commitment1, commitSig)
     }
 
-    fun receiveCommit(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, changes: CommitmentChanges, commit: CommitSig, log: MDCLogger): Either<ChannelException, Commitment> {
+    fun receiveCommit(channelKeys: KeyManager.ChannelKeys, params: ChannelParams, changes: CommitmentChanges, commit: CommitSig, localNonce: Pair<SecretNonce, IndividualNonce>?, log: MDCLogger): Either<ChannelException, Commitment> {
         // they sent us a signature for *their* view of *our* next commit tx
         // so in terms of rev.hashes and indexes we have:
         // ourCommit.index -> our current revocation hash, which is about to become our old revocation hash
@@ -523,7 +606,7 @@ data class Commitment(
         val spec = CommitmentSpec.reduce(localCommit.spec, changes.localChanges.acked, changes.remoteChanges.proposed)
         val localPerCommitmentPoint = channelKeys.commitmentPoint(localCommit.index + 1)
 
-        return LocalCommit.fromCommitSig(channelKeys, params, fundingTxIndex, remoteFundingPubkey, commitInput, commit, localCommit.index + 1, spec, localPerCommitmentPoint, log).map { localCommit1 ->
+        return LocalCommit.fromCommitSig(channelKeys, params, fundingTxIndex, remoteFundingPubkey, commitInput, commit, localCommit.index + 1, spec, localPerCommitmentPoint, localNonce, log).map { localCommit1 ->
             log.info {
                 val htlcsIn = spec.htlcs.incomings().map { it.id }.joinToString(",")
                 val htlcsOut = spec.htlcs.outgoings().map { it.id }.joinToString(",")
@@ -554,6 +637,7 @@ data class FullCommitment(
         params.channelFeatures.hasFeature(Feature.ZeroReserveChannels) -> 0.sat
         else -> (fundingAmount / 100).max(params.localParams.dustLimit)
     }
+    val isTaprootChannel = params.isTaprootChannel
 }
 
 data class WaitingForRevocation(val sentAfterLocalCommitIndex: Long)
@@ -566,7 +650,10 @@ data class Commitments(
     val payments: Map<Long, UUID>, // for outgoing htlcs, maps to paymentId
     val remoteNextCommitInfo: Either<WaitingForRevocation, PublicKey>, // this one is tricky, it must be kept in sync with Commitment.nextRemoteCommit
     val remotePerCommitmentSecrets: ShaChain,
-    val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty
+    val remoteChannelData: EncryptedChannelData = EncryptedChannelData.empty,
+    val nextRemoteNonces: List<IndividualNonce> = listOf(),
+    val closingNonce: Pair<SecretNonce, IndividualNonce>? = null,
+    val pendingRemoteNextLocalNonce: IndividualNonce? = null
 ) {
     init {
         require(active.isNotEmpty()) { "there must be at least one active commitment" }
@@ -575,6 +662,7 @@ data class Commitments(
     val channelId: ByteVector32 = params.channelId
     val localNodeId: PublicKey = params.localParams.nodeId
     val remoteNodeId: PublicKey = params.remoteParams.nodeId
+    val isTaprootChannel = params.isTaprootChannel
 
     // Commitment numbers are the same for all active commitments.
     val localCommitIndex = active.first().localCommit.index
@@ -758,7 +846,11 @@ data class Commitments(
     fun sendCommit(channelKeys: KeyManager.ChannelKeys, log: MDCLogger): Either<ChannelException, Pair<Commitments, List<CommitSig>>> {
         val remoteNextPerCommitmentPoint = remoteNextCommitInfo.right ?: return Either.Left(CannotSignBeforeRevocation(channelId))
         if (!changes.localHasChanges()) return Either.Left(CannotSignWithoutChanges(channelId))
-        val (active1, sigs) = active.map { it.sendCommit(channelKeys, params, changes, remoteNextPerCommitmentPoint, active.size, log) }.unzip()
+        val (active1, sigs) = when (isTaprootChannel) {
+            true -> active.zip(nextRemoteNonces).map { it.first.sendCommit(channelKeys, params, changes, remoteNextPerCommitmentPoint, active.size, it.second, log) }.unzip()
+            false -> active.map { it.sendCommit(channelKeys, params, changes, remoteNextPerCommitmentPoint, active.size, null, log) }.unzip()
+        }
+
         val commitments1 = copy(
             active = active1,
             remoteNextCommitInfo = Either.Left(WaitingForRevocation(localCommitIndex)),
@@ -779,7 +871,11 @@ data class Commitments(
         }
         // Signatures are sent in order (most recent first), calling `zip` will drop trailing sigs that are for deactivated/pruned commitments.
         val active1 = active.zip(commits).map {
-            when (val commitment1 = it.first.receiveCommit(channelKeys, params, changes, it.second, log)) {
+            val localNonce = when (this.isTaprootChannel) {
+                true -> channelKeys.verificationNonce(it.first.fundingTxIndex, localCommitIndex + 1)
+                false -> null
+            }
+            when (val commitment1 = it.first.receiveCommit(channelKeys, params, changes, it.second, localNonce, log)) {
                 is Either.Left -> return Either.Left(commitment1.value)
                 is Either.Right -> commitment1.value
             }
@@ -787,7 +883,15 @@ data class Commitments(
         // we will send our revocation preimage + our next revocation hash
         val localPerCommitmentSecret = channelKeys.commitmentSecret(localCommitIndex)
         val localNextPerCommitmentPoint = channelKeys.commitmentPoint(localCommitIndex + 2)
-        val revocation = RevokeAndAck(channelId, localPerCommitmentSecret, localNextPerCommitmentPoint)
+        val tlvStream: TlvStream<RevokeAndAckTlv> = when (isTaprootChannel) {
+            true -> {
+                val nonces = active.map { channelKeys.verificationNonce(it.fundingTxIndex, localCommitIndex + 2) }
+                TlvStream(RevokeAndAckTlv.NextLocalNoncesTlv(nonces.map { it.second }))
+            }
+
+            false -> TlvStream.empty()
+        }
+        val revocation = RevokeAndAck(channelId, localPerCommitmentSecret, localNextPerCommitmentPoint, tlvStream)
         val commitments1 = copy(
             active = active1,
             changes = changes.copy(
@@ -804,6 +908,8 @@ data class Commitments(
         // Since htlcs are shared across all commitments, we generate the actions only once based on the first commitment.
         val remoteCommit = active.first().remoteCommit
         if (revocation.perCommitmentSecret.publicKey() != remoteCommit.remotePerCommitmentPoint) return Either.Left(InvalidRevocation(channelId))
+
+        if (isTaprootChannel && revocation.nextLocalNonces.isEmpty()) return Either.Left(MissingNextLocalNonces(channelId))
 
         // the outgoing following htlcs have been completed (fulfilled or failed) when we received this revocation
         // they have been removed from both local and remote commitment
@@ -849,7 +955,8 @@ data class Commitments(
             remoteNextCommitInfo = Either.Right(revocation.nextPerCommitmentPoint),
             remotePerCommitmentSecrets = remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret.value, 0xFFFFFFFFFFFFL - remoteCommitIndex),
             payments = payments1,
-            remoteChannelData = revocation.channelData
+            remoteChannelData = revocation.channelData,
+            nextRemoteNonces = revocation.nextLocalNonces
         )
         return Either.Right(Pair(commitments1, actions.toList()))
     }
@@ -982,6 +1089,7 @@ data class Commitments(
 
         val ANCHOR_AMOUNT = 330.sat
         const val COMMIT_WEIGHT = 1124
+        const val COMMIT_WEIGHT_TAPROOT = 968
         const val HTLC_OUTPUT_WEIGHT = 172
         const val HTLC_TIMEOUT_WEIGHT = 666
         const val HTLC_SUCCESS_WEIGHT = 706
@@ -1028,6 +1136,7 @@ data class Commitments(
             val remoteHtlcPubkey = remoteParams.htlcBasepoint.deriveForCommitment(localPerCommitmentPoint)
             val localRevocationPubkey = remoteParams.revocationBasepoint.deriveForRevocation(localPerCommitmentPoint)
             val localPaymentBasepoint = channelKeys.paymentBasepoint
+            val isTaprootChannel = Features.canUseFeature(localParams.features, remoteParams.features, Feature.SimpleTaprootStaging)
             val outputs = makeCommitTxOutputs(
                 channelKeys.fundingPubKey(fundingTxIndex),
                 remoteFundingPubKey,
@@ -1039,7 +1148,8 @@ data class Commitments(
                 remotePaymentPubkey,
                 localHtlcPubkey,
                 remoteHtlcPubkey,
-                spec
+                spec,
+                isTaprootChannel
             )
             val commitTx = Transactions.makeCommitTx(commitmentInput, commitTxNumber, localPaymentBasepoint, remoteParams.paymentBasepoint, localParams.isChannelOpener, outputs)
             val htlcTxs = Transactions.makeHtlcTxs(commitTx.tx, localParams.dustLimit, localRevocationPubkey, remoteParams.toSelfDelay, localDelayedPaymentPubkey, spec.feerate, outputs)
@@ -1062,6 +1172,7 @@ data class Commitments(
             val remoteDelayedPaymentPubkey = remoteParams.delayedPaymentBasepoint.deriveForCommitment(remotePerCommitmentPoint)
             val remoteHtlcPubkey = remoteParams.htlcBasepoint.deriveForCommitment(remotePerCommitmentPoint)
             val remoteRevocationPubkey = channelKeys.revocationBasepoint.deriveForRevocation(remotePerCommitmentPoint)
+            val isTaprootChannel = Features.canUseFeature(localParams.features, remoteParams.features, Feature.SimpleTaprootStaging)
             val outputs = makeCommitTxOutputs(
                 remoteFundingPubKey,
                 channelKeys.fundingPubKey(fundingTxIndex),
@@ -1073,7 +1184,8 @@ data class Commitments(
                 localPaymentPubkey,
                 remoteHtlcPubkey,
                 localHtlcPubkey,
-                spec
+                spec,
+                isTaprootChannel
             )
             // NB: we are creating the remote commit tx, so local/remote parameters are inverted.
             val commitTx = Transactions.makeCommitTx(commitmentInput, commitTxNumber, remoteParams.paymentBasepoint, localPaymentPubkey, !localParams.isChannelOpener, outputs)

@@ -457,7 +457,7 @@ class IncomingPaymentHandler(val nodeParams: NodeParams, val db: PaymentsDb) {
             }
             is PaymentOnion.FinalPayload.Blinded -> {
                 // We encrypted the payment metadata for ourselves in the blinded path we included in the invoice.
-                return when (val metadata = OfferPaymentMetadata.fromPathId(nodeParams.nodeId, finalPayload.pathId)) {
+                return when (val metadata = OfferPaymentMetadata.fromPathId(nodeParams.nodePrivateKey, finalPayload.pathId, paymentPart.paymentHash)) {
                     null -> {
                         logger.warning { "invalid path_id: ${finalPayload.pathId.toHex()}" }
                         Either.Left(rejectPaymentPart(privateKey, paymentPart, null, currentBlockHeight))

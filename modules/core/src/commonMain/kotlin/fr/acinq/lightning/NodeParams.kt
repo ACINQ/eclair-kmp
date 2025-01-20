@@ -261,7 +261,7 @@ data class NodeParams(
      * This offer will stay valid after restoring the seed on a different device.
      * @return the default offer and the private key that will sign invoices for this offer.
      */
-    fun defaultOffer(trampolineNodeId: PublicKey): Pair<OfferTypes.Offer, PrivateKey> {
+    fun defaultOffer(trampolineNodeId: PublicKey): OfferTypes.OfferAndKey {
         // We generate a deterministic session key based on:
         //  - a custom tag indicating that this is used in the Bolt 12 context
         //  - our trampoline node, which is used as an introduction node for the offer's blinded path

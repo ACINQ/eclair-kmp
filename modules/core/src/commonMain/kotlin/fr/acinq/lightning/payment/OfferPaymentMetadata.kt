@@ -6,8 +6,10 @@ import fr.acinq.bitcoin.io.ByteArrayOutput
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
 import fr.acinq.lightning.MilliSatoshi
+import fr.acinq.lightning.crypto.ChaCha20Poly1305
 import fr.acinq.lightning.utils.msat
 import fr.acinq.lightning.wire.LightningCodecs
+import fr.acinq.lightning.wire.OfferTypes
 
 /**
  * The flow for Bolt 12 offer payments is the following:
@@ -37,6 +39,7 @@ sealed class OfferPaymentMetadata {
         LightningCodecs.writeByte(this.version.toInt(), out)
         when (this) {
             is V1 -> this.write(out)
+            is V2 -> this.write(out)
         }
         return out.toByteArray().byteVector()
     }
@@ -47,6 +50,25 @@ sealed class OfferPaymentMetadata {
             val encoded = this.encode()
             val signature = Crypto.sign(Crypto.sha256(encoded), nodeKey)
             encoded + signature
+        }
+        is V2 -> {
+            // We only encrypt what comes after the version byte.
+            val encoded = run {
+                val out = ByteArrayOutput()
+                this.write(out)
+                out.toByteArray()
+            }
+            val (encrypted, mac) = run {
+                val paymentHash = Crypto.sha256(this.preimage).byteVector32()
+                val priv = V2.deriveKey(nodeKey, paymentHash)
+                val nonce = paymentHash.take(12).toByteArray()
+                ChaCha20Poly1305.encrypt(priv.value.toByteArray(), nonce, encoded, paymentHash.toByteArray())
+            }
+            val out = ByteArrayOutput()
+            out.write(2) // version
+            out.write(encrypted)
+            out.write(mac)
+            out.toByteArray().byteVector()
         }
     }
 
@@ -86,6 +108,87 @@ sealed class OfferPaymentMetadata {
         }
     }
 
+    /** In this version, we encrypt the payment metadata with a key derived from our seed. */
+    data class V2(
+        override val offerId: ByteVector32,
+        override val amount: MilliSatoshi,
+        override val preimage: ByteVector32,
+        val payerKey: PublicKey,
+        val payerNote: String?,
+        val quantity: Long,
+        val contactSecret: ByteVector32?,
+        val payerOffer: OfferTypes.Offer?,
+        val payerAddress: UnverifiedContactAddress?,
+        override val createdAtMillis: Long
+    ) : OfferPaymentMetadata() {
+        override val version: Byte get() = 2
+
+        private fun writeOptionalBytes(data: ByteArray?, out: Output) = when (data) {
+            null -> LightningCodecs.writeU16(0, out)
+            else -> {
+                LightningCodecs.writeU16(data.size, out)
+                LightningCodecs.writeBytes(data, out)
+            }
+        }
+
+        private fun writeOptionalContactAddress(payerAddress: UnverifiedContactAddress?, out: Output) = when (payerAddress) {
+            null -> LightningCodecs.writeU16(0, out)
+            else -> {
+                val address = payerAddress.address.toString().encodeToByteArray()
+                LightningCodecs.writeU16(address.size + 33, out)
+                LightningCodecs.writeBytes(address, out)
+                LightningCodecs.writeBytes(payerAddress.expectedOfferSigningKey.value, out)
+            }
+        }
+
+        fun write(out: Output) {
+            LightningCodecs.writeBytes(offerId, out)
+            LightningCodecs.writeU64(amount.toLong(), out)
+            LightningCodecs.writeBytes(preimage, out)
+            LightningCodecs.writeBytes(payerKey.value, out)
+            writeOptionalBytes(payerNote?.encodeToByteArray(), out)
+            LightningCodecs.writeU64(quantity, out)
+            writeOptionalBytes(contactSecret?.toByteArray(), out)
+            writeOptionalBytes(payerOffer?.let { OfferTypes.Offer.tlvSerializer.write(it.records) }, out)
+            writeOptionalContactAddress(payerAddress, out)
+            LightningCodecs.writeU64(createdAtMillis, out)
+        }
+
+        companion object {
+            private fun readOptionalBytes(input: Input): ByteArray? = when (val size = LightningCodecs.u16(input)) {
+                0 -> null
+                else -> LightningCodecs.bytes(input, size)
+            }
+
+            private fun readOptionalContactAddress(input: Input): UnverifiedContactAddress? = when (val size = LightningCodecs.u16(input)) {
+                0 -> null
+                else -> ContactAddress.fromString(LightningCodecs.bytes(input, size - 33).decodeToString())?.let { address ->
+                    val offerKey = PublicKey(LightningCodecs.bytes(input, 33))
+                    UnverifiedContactAddress(address, offerKey)
+                }
+            }
+
+            fun read(input: Input): V2 {
+                val offerId = LightningCodecs.bytes(input, 32).byteVector32()
+                val amount = LightningCodecs.u64(input).msat
+                val preimage = LightningCodecs.bytes(input, 32).byteVector32()
+                val payerKey = PublicKey(LightningCodecs.bytes(input, 33))
+                val payerNote = readOptionalBytes(input)?.decodeToString()
+                val quantity = LightningCodecs.u64(input)
+                val contactSecret = readOptionalBytes(input)?.byteVector32()
+                val payerOffer = readOptionalBytes(input)?.let { OfferTypes.Offer.tlvSerializer.read(it) }?.let { OfferTypes.Offer(it) }
+                val payerAddress = readOptionalContactAddress(input)
+                val createdAtMillis = LightningCodecs.u64(input)
+                return V2(offerId, amount, preimage, payerKey, payerNote, quantity, contactSecret, payerOffer, payerAddress, createdAtMillis)
+            }
+
+            fun deriveKey(nodeKey: PrivateKey, paymentHash: ByteVector32): PrivateKey {
+                val tweak = Crypto.sha256("offer_payment_metadata_v2".encodeToByteArray() + paymentHash.toByteArray() + nodeKey.value.toByteArray())
+                return nodeKey * PrivateKey(tweak)
+            }
+        }
+    }
+
     companion object {
         /**
          * Decode an [OfferPaymentMetadata] encoded using [encode] (e.g. from our payments DB).
@@ -95,6 +198,7 @@ sealed class OfferPaymentMetadata {
             val input = ByteArrayInput(encoded.toByteArray())
             return when (val version = LightningCodecs.byte(input)) {
                 1 -> V1.read(input)
+                2 -> V2.read(input)
                 else -> throw IllegalArgumentException("unknown offer payment metadata version: $version")
             }
         }
@@ -103,7 +207,7 @@ sealed class OfferPaymentMetadata {
          * Decode an [OfferPaymentMetadata] stored in a blinded path's path_id field.
          * @return null if the path_id doesn't contain valid data created by us.
          */
-        fun fromPathId(nodeId: PublicKey, pathId: ByteVector): OfferPaymentMetadata? {
+        fun fromPathId(nodeKey: PrivateKey, pathId: ByteVector, paymentHash: ByteVector32): OfferPaymentMetadata? {
             if (pathId.isEmpty()) return null
             val input = ByteArrayInput(pathId.toByteArray())
             when (LightningCodecs.byte(input)) {
@@ -113,9 +217,22 @@ sealed class OfferPaymentMetadata {
                     val metadata = LightningCodecs.bytes(input, metadataSize)
                     val signature = LightningCodecs.bytes(input, 64).byteVector64()
                     // Note that the signature includes the version byte.
-                    if (!Crypto.verifySignature(Crypto.sha256(pathId.take(1 + metadataSize)), signature, nodeId)) return null
+                    if (!Crypto.verifySignature(Crypto.sha256(pathId.take(1 + metadataSize)), signature, nodeKey.publicKey())) return null
                     // This call is safe since we verified that we have the right number of bytes and the signature was valid.
                     return V1.read(ByteArrayInput(metadata))
+                }
+                2 -> {
+                    val priv = V2.deriveKey(nodeKey, paymentHash)
+                    val nonce = paymentHash.take(12).toByteArray()
+                    val encryptedSize = input.availableBytes - 16
+                    return try {
+                        val encrypted = LightningCodecs.bytes(input, encryptedSize)
+                        val mac = LightningCodecs.bytes(input, 16)
+                        val decrypted = ChaCha20Poly1305.decrypt(priv.value.toByteArray(), nonce, encrypted, paymentHash.toByteArray(), mac)
+                        V2.read(ByteArrayInput(decrypted))
+                    } catch (_: Throwable) {
+                        null
+                    }
                 }
                 else -> return null
             }

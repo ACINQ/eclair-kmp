@@ -365,7 +365,7 @@ class PaymentPacketTestsCommon : LightningTestSuite() {
         assertIs<PaymentOnion.FinalPayload.Blinded>(payloadD)
         assertEquals(finalAmount, payloadD.amount)
         assertEquals(finalExpiry, payloadD.expiry)
-        val paymentMetadata = OfferPaymentMetadata.fromPathId(d, payloadD.pathId)
+        val paymentMetadata = OfferPaymentMetadata.fromPathId(privD, payloadD.pathId, addD.paymentHash)
         assertNotNull(paymentMetadata)
         assertEquals(offer.offerId, paymentMetadata.offerId)
         assertEquals(paymentMetadata.paymentHash, invoice.paymentHash)
@@ -390,7 +390,7 @@ class PaymentPacketTestsCommon : LightningTestSuite() {
         assertEquals(finalAmount, payloadD.amount)
         assertEquals(finalAmount, payloadD.totalAmount)
         assertEquals(finalExpiry, payloadD.expiry)
-        assertEquals(paymentMetadata, OfferPaymentMetadata.fromPathId(d, payloadD.pathId))
+        assertEquals(paymentMetadata, OfferPaymentMetadata.fromPathId(privD, payloadD.pathId, addD.paymentHash))
     }
 
     @Test
